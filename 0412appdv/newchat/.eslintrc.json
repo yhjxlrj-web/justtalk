@@ -1,0 +1,8 @@
+{
+  "extends": ["next/core-web-vitals"],
+  "ignorePatterns": [
+    "android/app/build/**",
+    "android/app/src/main/assets/**",
+    "android/**/intermediates/**"
+  ]
+}

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">JustTalk</string>
+    <string name="title_activity_main">JustTalk</string>
+    <string name="package_name">com.justtalk.app</string>
+    <string name="custom_url_scheme">com.justtalk.app</string>
+</resources>

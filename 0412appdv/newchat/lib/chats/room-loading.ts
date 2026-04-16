@@ -1,0 +1,4 @@
+export const INITIAL_ROOM_MESSAGE_LIMIT = 36;
+export const UNREAD_CONTEXT_MESSAGE_LIMIT = 80;
+export const OLDER_MESSAGES_PAGE_SIZE = 40;
+export const PRELOAD_ROOM_LIMIT = 5;

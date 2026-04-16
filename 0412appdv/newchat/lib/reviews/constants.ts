@@ -1,0 +1,1 @@
+export const MAX_COMMUNITY_REVIEW_LENGTH = 80;
