@@ -165,10 +165,9 @@ export function HomeTabsView({
       <div className={sharedInsetClass}>
         <GlassCard className="overflow-hidden border border-slate-200 bg-[rgb(var(--surface-strong))] px-4 py-3 shadow-sm sm:px-5 sm:py-4 lg:px-5 lg:py-4 lg:shadow-md">
           <div className="flex items-start justify-between gap-3">
-            <h1 className="text-[1.45rem] font-semibold text-slate-900 sm:text-4xl">
+           <h1 className="text-[1.45rem] font-semibold text-slate-900 sm:text-4xl">
   PUSH TEST
-              {heroContent.title}
-            </h1>
+</h1>
             <div className="min-h-[28px] shrink-0">
               {isHomeRefreshing ? (
                 <div className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-500 shadow-soft sm:text-[12px]">
