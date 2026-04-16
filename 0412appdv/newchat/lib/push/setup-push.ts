@@ -17,6 +17,16 @@ export async function setupPush({ userId }: SetupPushOptions) {
     return;
   }
 
+  await PushNotifications.createChannel({
+    id: 'justtalk-default',
+    name: 'JustTalk Notifications',
+    description: 'Messages, hearts, and friend requests',
+    importance: 5,
+    visibility: 1,
+    sound: 'default',
+    vibration: true
+  });
+
   if (!listenersAttached) {
     PushNotifications.addListener('registration', async (token) => {
       console.log('[push] registration token:', token.value);

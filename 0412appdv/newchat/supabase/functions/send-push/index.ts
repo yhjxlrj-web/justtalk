@@ -201,8 +201,13 @@ serve(async (req) => {
               },
               data: data ?? {},
               android: {
-                priority: "high",
-              },
+  priority: "high",
+  notification: {
+    channel_id: "justtalk-default",
+    sound: "default",
+    default_vibrate_timings: true,
+  },
+},
             },
           }),
         }
