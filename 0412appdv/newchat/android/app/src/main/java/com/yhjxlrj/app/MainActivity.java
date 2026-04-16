@@ -1,4 +1,4 @@
-package com.yhjxlrj.talkbridge;
+package com.justtalk.app;
 
 import com.getcapacitor.BridgeActivity;
 
