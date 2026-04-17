@@ -106,13 +106,29 @@ function TabPanel({
 }
 
 function HomeSectionLoadingBar() {
+  const [isVisible, setIsVisible] = useState(false);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setIsVisible(true);
+    }, 140);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, []);
+
+  if (!isVisible) {
+    return <div className="mb-3.5 h-[2px] w-full opacity-0 sm:mb-4" aria-hidden="true" />;
+  }
+
   return (
     <div
       className="mb-3.5 h-[2px] w-full overflow-hidden rounded-full bg-slate-200 sm:mb-4"
       aria-label="Loading tab data"
       role="status"
     >
-      <div className="home-loading-bar h-full w-24 rounded-full bg-brand-400" />
+      <div className="h-full w-16 rounded-full bg-slate-300/80" />
     </div>
   );
 }
@@ -417,23 +433,28 @@ const FriendsPanel = memo(function FriendsPanel({
   if (!friends) {
     return (
       <>
+        <div className="inline-flex rounded-full border border-slate-200 bg-white p-1 shadow-soft">
+          <div className="h-8 w-[112px] rounded-full bg-slate-200/70" />
+          <div className="h-8 w-[112px] rounded-full bg-slate-100/75" />
+        </div>
         <HomeSectionLoadingBar />
         <div className="grid gap-3.5 xl:grid-cols-[0.95fr_1.05fr] xl:gap-4">
           <div className="space-y-3.5 sm:space-y-4">
-            <FriendListLoadingState />
+            <FriendListLoadingState delayMs={0} />
             <GlassCard className="rounded-[18px] border border-slate-200 bg-[rgb(var(--surface-strong))] p-3.5 shadow-soft">
               <div className="space-y-3">
-                <div className="h-3.5 w-24 animate-pulse rounded-full bg-brand-100" />
-                <div className="h-3 w-48 animate-pulse rounded-full bg-slate-200" />
-                <div className="h-10 w-full animate-pulse rounded-[16px] bg-brand-100" />
+                <div className="h-3.5 w-24 rounded-full bg-slate-200/70" />
+                <div className="h-3 w-48 rounded-full bg-slate-200/55" />
+                <div className="h-10 w-full rounded-[16px] bg-slate-200/60" />
               </div>
             </GlassCard>
           </div>
 
           <div className="space-y-3.5 sm:space-y-4">
-            <FriendListLoadingState />
+            <FriendListLoadingState delayMs={0} />
           </div>
         </div>
+        <FriendListLoadingState delayMs={0} />
       </>
     );
   }
@@ -734,7 +755,7 @@ const ChatsPanel = memo(function ChatsPanel({
     return (
       <>
         <HomeSectionLoadingBar />
-        <ChatListLoadingState />
+        <ChatListLoadingState delayMs={0} />
       </>
     );
   }
@@ -775,9 +796,9 @@ const SettingsPanel = memo(function SettingsPanel({
               className="rounded-[18px] border border-slate-200 bg-[rgb(var(--surface-strong))] p-3.5 shadow-soft"
             >
               <div className="space-y-3">
-                <div className="h-4 w-24 animate-pulse rounded-full bg-brand-100" />
-                <div className="h-3 w-48 animate-pulse rounded-full bg-slate-200" />
-                <div className="h-11 w-full animate-pulse rounded-[16px] bg-slate-200" />
+                <div className="h-4 w-24 rounded-full bg-slate-200/70" />
+                <div className="h-3 w-48 rounded-full bg-slate-200/55" />
+                <div className="h-11 w-full rounded-[16px] bg-slate-200/60" />
               </div>
             </GlassCard>
           ))}

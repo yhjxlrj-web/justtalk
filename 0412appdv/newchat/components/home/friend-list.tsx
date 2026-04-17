@@ -950,24 +950,50 @@ export function FriendList({
   );
 }
 
-export function FriendListLoadingState() {
+export function FriendListLoadingState({
+  delayMs = 150
+}: {
+  delayMs?: number;
+} = {}) {
+  const [isVisible, setIsVisible] = useState(() => delayMs <= 0);
+
+  useEffect(() => {
+    if (delayMs <= 0) {
+      setIsVisible(true);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setIsVisible(true);
+    }, delayMs);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [delayMs]);
+
+  if (!isVisible) {
+    return <div className="min-h-[180px]" />;
+  }
+
   return (
     <div className="space-y-3.5 sm:space-y-4">
-      {[0, 1, 2].map((section) => (
+      {[0, 1].map((section) => (
         <div key={section} className="space-y-3">
-          <div className="h-3.5 w-28 animate-pulse rounded-full bg-brand-100" />
-          <div className="h-3 w-44 animate-pulse rounded-full bg-slate-200" />
+          <div className="h-3.5 w-28 rounded-full bg-slate-200/70" />
+          <div className="h-3 w-44 rounded-full bg-slate-200/55" />
           <div className="space-y-2.5">
             {[0, 1].map((item) => (
               <div
-            key={`${section}-${item}`}
+                key={`${section}-${item}`}
                 className="friend-list-surface flex items-center gap-3 rounded-[16px] px-3.5 py-3 shadow-soft"
               >
-                <div className="h-10 w-10 animate-pulse rounded-[14px] bg-brand-100" />
+                <div className="h-11 w-11 rounded-[15px] bg-slate-200/70" />
                 <div className="flex-1 space-y-2">
-                  <div className="h-3.5 w-28 animate-pulse rounded-full bg-brand-100" />
-                  <div className="h-3 w-24 animate-pulse rounded-full bg-slate-200" />
+                  <div className="h-3.5 w-28 rounded-full bg-slate-200/70" />
+                  <div className="h-3 w-24 rounded-full bg-slate-200/55" />
                 </div>
+                <div className="h-8 w-[78px] rounded-[14px] bg-slate-200/60" />
               </div>
             ))}
           </div>

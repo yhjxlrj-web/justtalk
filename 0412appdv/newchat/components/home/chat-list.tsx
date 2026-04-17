@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import type { MouseEvent } from "react";
+import { useEffect, useState, type MouseEvent } from "react";
 import { patchCachedChatPreview } from "@/components/home/chat-preview-cache";
 import { useCurrentLocale, useDictionary } from "@/components/providers/dictionary-provider";
 import { cn } from "@/lib/utils";
@@ -194,22 +194,53 @@ export function ChatListEmptyState() {
   );
 }
 
-export function ChatListLoadingState() {
+export function ChatListLoadingState({
+  delayMs = 150,
+  rowCount = 4
+}: {
+  delayMs?: number;
+  rowCount?: number;
+} = {}) {
+  const [isVisible, setIsVisible] = useState(() => delayMs <= 0);
+
+  useEffect(() => {
+    if (delayMs <= 0) {
+      setIsVisible(true);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setIsVisible(true);
+    }, delayMs);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [delayMs]);
+
+  if (!isVisible) {
+    return <div className="min-h-[calc(100dvh-13rem)]" />;
+  }
+
   return (
     <div className="flex min-w-0 h-full min-h-[calc(100dvh-13rem)] w-full flex-col">
       <div className="flex-1 w-full space-y-2">
-        {[0, 1, 2, 3].map((item) => (
+        {Array.from({ length: rowCount }, (_, item) => (
           <div
             key={item}
             className="chat-list-border flex w-full items-center gap-2.5 rounded-[16px] border border-slate-200 bg-white px-4 py-2.5 shadow-soft"
           >
-            <div className="h-10 w-10 animate-pulse rounded-[14px] bg-brand-100" />
-            <div className="flex-1 space-y-2">
+            <div className="h-10 w-10 rounded-[14px] bg-slate-200/70" />
+            <div className="min-w-0 flex-1 space-y-2">
               <div className="flex items-center justify-between gap-3">
-                <div className="h-3.5 w-28 animate-pulse rounded-full bg-brand-100" />
-                <div className="h-3 w-10 animate-pulse rounded-full bg-slate-200" />
+                <div className="h-3.5 w-28 rounded-full bg-slate-200/70" />
+                <div className="h-3 w-10 rounded-full bg-slate-200/55" />
               </div>
-              <div className="h-3 w-40 animate-pulse rounded-full bg-slate-200" />
+              <div className="h-3 w-40 rounded-full bg-slate-200/55" />
+            </div>
+            <div className="flex shrink-0 flex-col items-end gap-1">
+              <div className="h-2.5 w-8 rounded-full bg-slate-200/55" />
+              <div className="h-2.5 w-7 rounded-full bg-slate-200/50" />
             </div>
           </div>
         ))}
