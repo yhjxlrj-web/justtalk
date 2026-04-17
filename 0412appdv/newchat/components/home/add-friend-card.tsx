@@ -3,7 +3,7 @@
 import { useActionState, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useCurrentLocale, useDictionary } from "@/components/providers/dictionary-provider";
-import { PrimaryButton, SecondaryButton } from "@/components/ui/button";
+import { PrimaryButton } from "@/components/ui/button";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Input } from "@/components/ui/input";
 import { initialCreateFriendRequestFormState } from "@/lib/friends/action-state";
@@ -34,7 +34,7 @@ export function AddFriendCard() {
   }, [router, state?.successMessage]);
 
   return (
-    <GlassCard className="rounded-[18px] border border-slate-200 bg-[rgb(var(--surface-strong))] p-3.5 shadow-soft">
+    <GlassCard className="rounded-[16px] border border-slate-200 bg-[rgb(var(--surface-strong))] p-3.5 shadow-soft">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p className="text-[13px] font-semibold text-ink sm:text-sm">{dictionary.addFriend}</p>
@@ -55,7 +55,7 @@ export function AddFriendCard() {
       </div>
 
       {state?.successMessage ? (
-        <div className="mt-3.5 rounded-[16px] border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-[12px] text-emerald-700 shadow-soft sm:text-sm">
+        <div className="mt-3.5 rounded-[14px] border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-[12px] text-emerald-700 shadow-soft sm:text-sm">
           {state.successMessage}
         </div>
       ) : null}
@@ -73,19 +73,16 @@ export function AddFriendCard() {
           />
 
           {errors.form ? (
-            <div className="rounded-[16px] border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[12px] text-rose-600 shadow-soft sm:text-sm">
+            <div className="rounded-[14px] border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[12px] text-rose-600 shadow-soft sm:text-sm">
               {errors.form}
             </div>
           ) : (
-            <div className="rounded-[16px] border border-slate-200 bg-white px-3.5 py-2.5 text-[12px] leading-5 text-slate-500 shadow-soft sm:text-sm sm:leading-6">
+            <div className="rounded-[14px] border border-slate-200 bg-white px-3.5 py-2.5 text-[12px] leading-5 text-slate-500 shadow-soft sm:text-sm sm:leading-6">
               {copy.addFriend.helper}
             </div>
           )}
 
-          <div className="flex flex-col gap-2.5 sm:flex-row">
-            <SecondaryButton type="button" className="sm:w-auto" onClick={() => setIsOpen(false)}>
-              {dictionary.cancel}
-            </SecondaryButton>
+          <div className="flex">
             <PrimaryButton type="submit" className="sm:w-auto" disabled={isPending}>
               {isPending ? dictionary.sending : dictionary.sendRequest}
             </PrimaryButton>

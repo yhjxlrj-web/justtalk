@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useRef, useState } from "react";
+import { useActionState, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bell, Heart, MessageCircle } from "lucide-react";
 import { createPortal } from "react-dom";
 import { FriendProfileDetail } from "@/components/home/friend-profile-detail";
@@ -88,6 +88,10 @@ function formatNotificationTimestamp(locale: string, createdAt: number) {
     hour: "numeric",
     minute: "2-digit"
   }).format(createdAt);
+}
+
+function getLatestNotificationCreatedAt(items: CommunityNotificationItem[]) {
+  return items.reduce((maxValue, item) => Math.max(maxValue, item.createdAt), 0);
 }
 
 function getCountryLabelWithFlag(country?: string) {
@@ -549,6 +553,9 @@ export function CommunityList({
   const notificationButtonRef = useRef<HTMLButtonElement | null>(null);
   const notificationFetchPromiseRef = useRef<Promise<CommunityNotificationItem[]> | null>(null);
   const heartStateFetchPromiseRef = useRef<Promise<Set<string>> | null>(null);
+  const notificationsReadAtRef = useRef(notificationsReadAt);
+  const isNotificationsOpenRef = useRef(isNotificationsOpen);
+  const visibleNotificationsRef = useRef<CommunityNotificationItem[]>([]);
   const blockedUserIdSet = useMemo(() => new Set(blockedUserIds), [blockedUserIds]);
   const acceptedFriendUserIdSet = useMemo(
     () => new Set(acceptedFriendUserIds),
@@ -560,6 +567,45 @@ export function CommunityList({
     [incomingRequestUserIds]
   );
   const sentHeartUserIdSet = useMemo(() => new Set(sentHeartUserIds), [sentHeartUserIds]);
+  const visibleNotifications = useMemo(
+    () => notifications.filter((item) => !blockedUserIdSet.has(item.senderUserId)),
+    [blockedUserIdSet, notifications]
+  );
+
+  const commitNotificationsReadAt = useCallback(
+    (readAt: number) => {
+      const normalizedReadAt =
+        Number.isFinite(readAt) && readAt > 0 ? Math.floor(readAt) : 0;
+
+      if (normalizedReadAt <= 0) {
+        return;
+      }
+
+      setNotificationsReadAt((currentReadAt) => {
+        const nextReadAt = Math.max(currentReadAt, normalizedReadAt);
+
+        if (nextReadAt !== currentReadAt) {
+          notificationsReadAtRef.current = nextReadAt;
+          setCachedCommunityNotificationsReadAt(userId, nextReadAt);
+        }
+
+        return nextReadAt;
+      });
+    },
+    [userId]
+  );
+
+  useEffect(() => {
+    notificationsReadAtRef.current = notificationsReadAt;
+  }, [notificationsReadAt]);
+
+  useEffect(() => {
+    isNotificationsOpenRef.current = isNotificationsOpen;
+  }, [isNotificationsOpen]);
+
+  useEffect(() => {
+    visibleNotificationsRef.current = visibleNotifications;
+  }, [visibleNotifications]);
 
   const loadNotifications = useMemo(
     () => async (force = false) => {
@@ -577,6 +623,12 @@ export function CommunityList({
         .then((items) => {
           setCachedCommunityNotifications(userId, items);
           setNotifications(items);
+
+          if (isNotificationsOpenRef.current) {
+            const latestReadAt = Math.max(Date.now(), getLatestNotificationCreatedAt(items));
+            commitNotificationsReadAt(latestReadAt);
+          }
+
           return items;
         })
         .catch((error) => {
@@ -595,7 +647,7 @@ export function CommunityList({
       notificationFetchPromiseRef.current = fetchPromise;
       return fetchPromise;
     },
-    [supabase, userId]
+    [commitNotificationsReadAt, supabase, userId]
   );
 
   useEffect(() => {
@@ -733,24 +785,37 @@ export function CommunityList({
   }, [isNotificationsOpen, updateNotificationPosition]);
 
   const hasProfiles = (profiles?.length ?? 0) > 0;
-  const visibleNotifications = notifications.filter(
-    (item) => !blockedUserIdSet.has(item.senderUserId)
-  );
   const unreadNotificationCount = isNotificationsOpen
     ? 0
     : visibleNotifications.filter((item) => item.createdAt > notificationsReadAt).length;
 
   const handleNotificationButtonClick = () => {
-    updateNotificationPosition();
-    void loadNotifications(true);
+    const willOpen = !isNotificationsOpenRef.current;
 
-    if (!isNotificationsOpen) {
-      const nextReadAt = Date.now();
-      setNotificationsReadAt(nextReadAt);
-      setCachedCommunityNotificationsReadAt(userId, nextReadAt);
+    updateNotificationPosition();
+
+    if (willOpen) {
+      const optimisticReadAt = Math.max(
+        Date.now(),
+        getLatestNotificationCreatedAt(visibleNotificationsRef.current)
+      );
+      commitNotificationsReadAt(optimisticReadAt);
     }
 
     setIsNotificationsOpen((current) => !current);
+
+    const refreshPromise = loadNotifications(true);
+
+    if (willOpen) {
+      void refreshPromise.then((items) => {
+        if (!isNotificationsOpenRef.current) {
+          return;
+        }
+
+        const nextReadAt = Math.max(Date.now(), getLatestNotificationCreatedAt(items));
+        commitNotificationsReadAt(nextReadAt);
+      });
+    }
   };
 
   if (isLoading && (!profiles || profiles.length === 0)) {

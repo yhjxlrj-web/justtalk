@@ -126,18 +126,30 @@ export function setCachedCommunityNotificationsReadAt(userId: string, readAt: nu
     return;
   }
 
-  notificationReadAtByUserId.set(userId, readAt);
+  const normalizedReadAt =
+    Number.isFinite(readAt) && readAt > 0 ? Math.floor(readAt) : 0;
+  const cachedReadAt = getCachedCommunityNotificationsReadAt(userId);
+  const nextReadAt = Math.max(cachedReadAt, normalizedReadAt);
+
+  notificationReadAtByUserId.set(userId, nextReadAt);
 
   if (typeof window === "undefined") {
     return;
   }
 
   try {
-    window.localStorage.setItem(getNotificationReadStorageKey(userId), String(readAt));
+    const storageKey = getNotificationReadStorageKey(userId);
+    const localStorageReadAt = Number(window.localStorage.getItem(storageKey) ?? "0");
+    const mergedReadAt =
+      Number.isFinite(localStorageReadAt) && localStorageReadAt > 0
+        ? Math.max(localStorageReadAt, nextReadAt)
+        : nextReadAt;
+
+    window.localStorage.setItem(storageKey, String(mergedReadAt));
   } catch (error) {
     console.error("Failed to write community notification read marker", {
       userId,
-      readAt,
+      readAt: nextReadAt,
       error
     });
   }

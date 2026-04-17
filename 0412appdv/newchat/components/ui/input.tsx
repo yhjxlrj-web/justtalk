@@ -13,7 +13,7 @@ export function Input({ className, error, hint, id, label, ...props }: InputProp
       <input
         id={id}
         className={cn(
-          "w-full rounded-[18px] border bg-white px-4 py-3 text-sm text-ink shadow-soft outline-none transition placeholder:text-slate-400 focus:ring-2",
+          "w-full rounded-[14px] border bg-white px-4 py-3 text-sm text-ink shadow-soft outline-none transition placeholder:text-slate-400 focus:ring-2",
           error
             ? "border-rose-200 focus:border-rose-200 focus:ring-rose-100"
             : "border-slate-200 focus:border-brand-200 focus:ring-brand-100",

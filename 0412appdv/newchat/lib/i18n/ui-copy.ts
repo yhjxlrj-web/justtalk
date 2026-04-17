@@ -71,12 +71,14 @@ export type UiCopy = {
     hoursAgo: string;
     blockedTitle: string;
     blockedDescription: string;
+    friendsSwipeHint: string;
     noBlockedUsers: string;
     noBlockedUsersDescription: string;
     deleteAction: string;
     blockAction: string;
     unblockAction: string;
     blockConfirm: string;
+    blockPrivacyHint: string;
     removeError: string;
     blockError: string;
     unblockError: string;
@@ -124,8 +126,7 @@ export const uiCopy: Record<SupportedLocale, UiCopy> = {
     },
     addFriend: {
       description: "",
-      helper:
-        "We'll look up the profile by email, block self-adds and duplicates, and create a pending request.",
+      helper: "Send a friend request by email.",
       emailPlaceholder: "friend@example.com"
     },
     settings: {
@@ -183,12 +184,14 @@ export const uiCopy: Record<SupportedLocale, UiCopy> = {
       hoursAgo: "{count}h ago",
       blockedTitle: "Blocked users",
       blockedDescription: "",
+      friendsSwipeHint: "Swipe left to block a friend.",
       noBlockedUsers: "No blocked users",
       noBlockedUsersDescription: "People you block will appear here so you can manage them later.",
       deleteAction: "Delete",
       blockAction: "Block",
       unblockAction: "Unblock",
       blockConfirm: "Block this user?",
+      blockPrivacyHint: "They won't know that you blocked them.",
       removeError: "We couldn't remove this friend right now.",
       blockError: "We couldn't block this user right now.",
       unblockError: "We couldn't unblock this user right now."
@@ -234,8 +237,7 @@ export const uiCopy: Record<SupportedLocale, UiCopy> = {
     },
     addFriend: {
       description: "",
-      helper:
-        "이메일로 프로필을 찾고, 자기 자신 추가와 중복 요청을 막은 뒤 대기 중인 요청을 만들어요.",
+      helper: "이메일로 친구요청을 보내세요",
       emailPlaceholder: "friend@example.com"
     },
     settings: {
@@ -293,12 +295,14 @@ export const uiCopy: Record<SupportedLocale, UiCopy> = {
       hoursAgo: "{count}시간 전",
       blockedTitle: "차단한 목록",
       blockedDescription: "",
+      friendsSwipeHint: "왼쪽으로 슬라이드하면 친구를 차단할수 있습니다",
       noBlockedUsers: "차단한 사용자가 없습니다",
       noBlockedUsersDescription: "차단한 사람은 여기에서 다시 관리할 수 있어요.",
       deleteAction: "삭제",
       blockAction: "차단",
       unblockAction: "차단 해제",
       blockConfirm: "이 사용자를 차단할까요?",
+      blockPrivacyHint: "상대방은 내가 차단 한 것을 알수없습니다",
       removeError: "지금은 친구를 삭제할 수 없어요.",
       blockError: "지금은 이 사용자를 차단할 수 없어요.",
       unblockError: "지금은 차단을 해제할 수 없어요."
@@ -344,8 +348,7 @@ export const uiCopy: Record<SupportedLocale, UiCopy> = {
     },
     addFriend: {
       description: "",
-      helper:
-        "Buscaremos el perfil por correo, bloquearemos duplicados y crearemos una solicitud pendiente.",
+      helper: "Envía una solicitud de amistad por correo electrónico.",
       emailPlaceholder: "friend@example.com"
     },
     settings: {
@@ -403,12 +406,14 @@ export const uiCopy: Record<SupportedLocale, UiCopy> = {
       hoursAgo: "Hace {count} h",
       blockedTitle: "Usuarios bloqueados",
       blockedDescription: "",
+      friendsSwipeHint: "Desliza a la izquierda para bloquear a un amigo.",
       noBlockedUsers: "No hay usuarios bloqueados",
       noBlockedUsersDescription: "Las personas que bloquees aparecerán aquí para gestionarlas después.",
       deleteAction: "Eliminar",
       blockAction: "Bloquear",
       unblockAction: "Desbloquear",
       blockConfirm: "¿Bloquear a este usuario?",
+      blockPrivacyHint: "La otra persona no sabrá que la bloqueaste.",
       removeError: "No pudimos eliminar a este amigo ahora.",
       blockError: "No pudimos bloquear a este usuario ahora.",
       unblockError: "No pudimos desbloquear a este usuario ahora."

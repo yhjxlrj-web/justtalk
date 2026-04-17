@@ -494,14 +494,14 @@ html.theme-classic .chat-bubble-incoming {
   }
 
   .glass-panel {
-    @apply rounded-[28px];
+    @apply rounded-[18px];
     border: none;
     background-color: rgb(var(--surface));
     box-shadow: 0 16px 36px -28px rgba(var(--panel-shadow), 0.26);
   }
 
   .glass-panel-strong {
-    @apply rounded-[28px];
+    @apply rounded-[18px];
     border: none;
     background-color: rgb(var(--surface-strong));
     box-shadow: 0 18px 42px -30px rgba(var(--panel-shadow), 0.3);

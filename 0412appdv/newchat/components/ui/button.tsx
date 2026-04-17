@@ -19,7 +19,7 @@ type ButtonProps = {
 };
 
 const sharedClasses =
-  "inline-flex items-center justify-center rounded-full px-4 py-2.5 text-[13px] font-semibold transform-gpu transition-[transform,box-shadow,background-color,border-color,color] duration-100 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-300 focus-visible:ring-offset-2 sm:px-5 sm:py-3 sm:text-sm";
+  "inline-flex items-center justify-center rounded-[14px] px-4 py-2.5 text-[13px] font-semibold transform-gpu transition-[transform,box-shadow,background-color,border-color,color] duration-100 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-300 focus-visible:ring-offset-2 sm:px-5 sm:py-3 sm:text-sm";
 
 const pressableClasses =
   "active:scale-[0.985] active:translate-y-[1.5px] active:shadow-none disabled:active:scale-100 disabled:active:translate-y-0";

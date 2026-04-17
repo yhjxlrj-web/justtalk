@@ -652,7 +652,7 @@ const FriendsPanel = memo(function FriendsPanel({
 
   const segmentButtonClassName = (tab: FriendsSubview) =>
     cn(
-      "inline-flex min-w-[110px] items-center justify-center rounded-full px-4 py-2 text-[13px] font-medium transition",
+      "inline-flex min-w-[110px] items-center justify-center rounded-[14px] px-4 py-2 text-[13px] font-medium transition",
       activeSubview === tab
         ? "bg-brand-500 text-white shadow-float"
         : "bg-transparent text-slate-600 hover:bg-slate-50"
@@ -660,7 +660,7 @@ const FriendsPanel = memo(function FriendsPanel({
 
   return (
     <div className="space-y-3.5 sm:space-y-4">
-      <div className="inline-flex rounded-full border border-slate-200 bg-white p-1 shadow-soft">
+      <div className="inline-flex rounded-[16px] border border-slate-200 bg-white p-1 shadow-soft">
         <button
           type="button"
           className={segmentButtonClassName("community")}

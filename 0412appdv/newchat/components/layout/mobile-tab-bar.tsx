@@ -21,9 +21,9 @@ export function MobileTabBar() {
     x: number;
     y: number;
   }>({
-    height: 36,
+    height: 46,
     opacity: 0,
-    width: 36,
+    width: 46,
     x: 0,
     y: 0
   });
@@ -53,11 +53,11 @@ export function MobileTabBar() {
   }, [activeIndex]);
 
   return (
-    <nav className="fixed bottom-2 right-3 z-20 lg:hidden">
-      <div className="relative flex h-[48px] w-[150px] items-center justify-between rounded-[16px] border border-slate-200 bg-[rgb(var(--surface-strong))] px-2 py-1 shadow-md">
+    <nav className="fixed bottom-[calc(0.5rem+env(safe-area-inset-bottom))] right-3 z-20 lg:hidden">
+      <div className="relative flex h-[62px] w-[195px] items-center justify-between rounded-[20px] border border-slate-200 bg-[rgb(var(--surface-strong))] px-2.5 py-1.5 shadow-md">
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute left-0 top-0 rounded-lg bg-brand-500 shadow-sm transition-transform duration-220 ease-out"
+          className="pointer-events-none absolute left-0 top-0 rounded-[14px] bg-brand-500 shadow-sm transition-transform duration-220 ease-out"
           style={{
             height: `${highlightStyle.height}px`,
             opacity: highlightStyle.opacity,
@@ -84,8 +84,8 @@ export function MobileTabBar() {
                 className={cn(
                   "relative z-10 flex items-center justify-center transition",
                   active
-                    ? "h-9 w-9 rounded-lg text-pink-500"
-                    : "h-8 w-8 rounded-md text-brand-700 hover:bg-gray-100"
+                    ? "h-[46px] w-[46px] rounded-[14px] text-pink-500"
+                    : "h-[42px] w-[42px] rounded-[12px] text-brand-700 hover:bg-gray-100"
                 )}
               >
                 <MobileTabIcon icon={item.icon} active={active} />
@@ -105,8 +105,8 @@ export function MobileTabBar() {
               className={cn(
                 "relative z-10 flex items-center justify-center transition",
                 active
-                  ? "h-9 w-9 rounded-lg text-pink-500"
-                  : "h-8 w-8 rounded-md text-brand-700 hover:bg-gray-100"
+                  ? "h-[46px] w-[46px] rounded-[14px] text-pink-500"
+                  : "h-[42px] w-[42px] rounded-[12px] text-brand-700 hover:bg-gray-100"
               )}
             >
               <MobileTabIcon icon={item.icon} active={active} />
@@ -123,7 +123,7 @@ function MobileTabIcon({ active, icon }: { active: boolean; icon: string }) {
 
   if (icon === "friends") {
     return (
-      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" strokeWidth="1.9">
+      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" strokeWidth="1.9">
         <circle className={common} cx="9" cy="8" r="3.25" />
         <circle className={common} cx="16.5" cy="9.5" r="2.5" />
         <path className={common} d="M4 19c1.4-2.7 3.5-4 6.2-4 2.4 0 4.4 1 5.8 3" />
@@ -134,14 +134,14 @@ function MobileTabIcon({ active, icon }: { active: boolean; icon: string }) {
 
   if (icon === "chat") {
     return (
-      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" strokeWidth="1.9">
+      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" strokeWidth="1.9">
         <path className={common} d="M4 5h16v10H8l-4 4V5Z" />
       </svg>
     );
   }
 
   return (
-    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" strokeWidth="1.9">
+    <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" strokeWidth="1.9">
       <path className={common} d="M12 3v3" />
       <path className={common} d="M12 18v3" />
       <path className={common} d="M4.9 4.9l2.1 2.1" />

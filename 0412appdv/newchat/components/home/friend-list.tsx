@@ -49,6 +49,7 @@ type FriendListProps = {
 type SectionProps = {
   title: string;
   description: string;
+  helperText?: string;
   emptyTitle: string;
   emptyDescription: string;
   hasItems: boolean;
@@ -116,6 +117,7 @@ export function formatLastActiveLabel(
 
 function FriendSection({
   title,
+  helperText,
   emptyTitle,
   emptyDescription,
   hasItems,
@@ -127,6 +129,11 @@ function FriendSection({
         <p className="text-[11px] font-medium tracking-[0.01em] text-slate-500 sm:text-xs">
           {title}
         </p>
+        {helperText ? (
+          <p className="mt-1 text-[11px] leading-4.5 text-slate-500/90 sm:text-[12px] sm:leading-5">
+            {helperText}
+          </p>
+        ) : null}
       </div>
 
       {hasItems ? (
@@ -389,7 +396,7 @@ function ManageAcceptedFriendshipActions({
 
   return (
     <div
-      className="absolute inset-y-0 right-0 flex items-stretch gap-2 pl-3"
+      className="absolute inset-y-0 right-0 flex items-center gap-2 pl-3"
       onClick={(event) => event.stopPropagation()}
       onPointerDown={(event) => event.stopPropagation()}
     >
@@ -401,9 +408,13 @@ function ManageAcceptedFriendshipActions({
           name="action"
           value="block"
           disabled={isPending}
-          className="flex min-w-[86px] items-center justify-center rounded-[14px] bg-rose-500 px-3 text-[12px] font-semibold text-white transition active:scale-[0.98] disabled:opacity-60"
+          className="flex h-8 min-w-[74px] items-center justify-center rounded-[12px] bg-rose-500 px-2.5 text-[11px] font-semibold text-white transition active:scale-[0.98] disabled:opacity-60"
           onClick={(event) => {
-            if (!window.confirm(copy.friendList.blockConfirm)) {
+            if (
+              !window.confirm(
+                `${copy.friendList.blockConfirm}\n\n${copy.friendList.blockPrivacyHint}`
+              )
+            ) {
               event.preventDefault();
             }
           }}
@@ -467,7 +478,7 @@ function BlockedFriendActions({
         name="action"
         value="unblock"
         disabled={isPending}
-        className="flex h-9 min-w-[86px] items-center justify-center rounded-[14px] border border-slate-200 bg-slate-50 px-3 text-[12px] font-semibold text-slate-700 transition active:scale-[0.98] disabled:opacity-60"
+        className="flex h-8 min-w-[74px] items-center justify-center rounded-[12px] border border-slate-200 bg-slate-50 px-2.5 text-[11px] font-semibold text-slate-700 transition active:scale-[0.98] disabled:opacity-60"
         onClick={() => {
           console.log("blocked friend unblock button click", {
             action: "unblock",
@@ -748,6 +759,7 @@ export function FriendList({
           <FriendSection
             title={dictionary.friendsList}
             description={dictionary.acceptedFriendsDescription}
+            helperText={copy.friendList.friendsSwipeHint}
             emptyTitle={dictionary.noAcceptedFriends}
             emptyDescription={dictionary.noAcceptedFriendsDescription}
             hasItems={acceptedFriendItems.length > 0}

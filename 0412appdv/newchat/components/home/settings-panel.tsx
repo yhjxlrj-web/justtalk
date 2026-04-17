@@ -274,7 +274,7 @@ export function HomeSettingsPanel({
 
   const segmentButtonClassName = (tab: SettingsSubview) =>
     cn(
-      "inline-flex min-w-[110px] items-center justify-center rounded-full px-4 py-2 text-[13px] font-medium transition",
+      "inline-flex min-w-[110px] items-center justify-center rounded-[14px] px-4 py-2 text-[13px] font-medium transition",
       activeSubview === tab
         ? "bg-brand-500 text-white shadow-float"
         : "bg-transparent text-slate-600 hover:bg-slate-50"
@@ -284,7 +284,7 @@ export function HomeSettingsPanel({
     <div className="space-y-4">
       {isDeveloperMode ? (
         <div className="flex items-center justify-between gap-3">
-          <div className="inline-flex rounded-full border border-slate-200 bg-white p-1 shadow-soft">
+          <div className="inline-flex rounded-[16px] border border-slate-200 bg-white p-1 shadow-soft">
             <button
               type="button"
               className={segmentButtonClassName("settings")}
@@ -417,7 +417,7 @@ function SettingsMainContent({
             disabled={isLastSeenPending}
             onClick={handleLastSeenToggle}
             className={cn(
-              "relative inline-flex h-[34px] w-[82px] shrink-0 items-center rounded-full border p-[3px] transition-[background-color,border-color]",
+              "relative inline-flex h-[34px] w-[82px] shrink-0 items-center rounded-[14px] border p-[3px] transition-[background-color,border-color]",
               showLastSeen
                 ? "border-brand-300 bg-brand-50"
                 : "border-slate-200 bg-slate-100",
@@ -426,7 +426,7 @@ function SettingsMainContent({
           >
             <span
               className={cn(
-                "pointer-events-none absolute inset-y-[3px] left-[3px] rounded-full bg-white shadow-soft transition-transform duration-200 ease-out",
+                "pointer-events-none absolute inset-y-[3px] left-[3px] rounded-[12px] bg-white shadow-soft transition-transform duration-200 ease-out",
                 showLastSeen ? "translate-x-0" : "translate-x-full"
               )}
               style={{ width: "calc(50% - 3px)" }}
