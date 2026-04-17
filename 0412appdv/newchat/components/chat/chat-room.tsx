@@ -9,6 +9,8 @@ import { MessageBubble } from "@/components/chat/message-bubble";
 import { RoomHeader } from "@/components/chat/room-header";
 import type { ChatMessage, ChatRoomSummary } from "@/types/chat";
 
+const INITIAL_ROOM_SKELETON_DELAY_MS = 150;
+
 export function ChatRoom({
   connectionState = "connected",
   hasResolvedInitialScrollTarget = false,
@@ -99,6 +101,7 @@ export function ChatRoom({
   const [visualViewportHeight, setVisualViewportHeight] = useState<number | null>(null);
   const [keyboardInset, setKeyboardInset] = useState(0);
   const [selectedImageMessage, setSelectedImageMessage] = useState<ChatMessage | null>(null);
+  const [canRenderInitialSkeleton, setCanRenderInitialSkeleton] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined" || !window.visualViewport) {
@@ -255,8 +258,30 @@ export function ChatRoom({
     });
   }, [isOlderMessagesLoading, messages.length]);
 
-  const showRoomSkeleton = !suppressInitialSkeleton && !hasRecentMessages && isInitialRoomLoading;
+  useEffect(() => {
+    if (suppressInitialSkeleton || hasRecentMessages || !isInitialRoomLoading) {
+      setCanRenderInitialSkeleton(false);
+      return;
+    }
+
+    if (typeof window === "undefined") {
+      setCanRenderInitialSkeleton(true);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setCanRenderInitialSkeleton(true);
+    }, INITIAL_ROOM_SKELETON_DELAY_MS);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [hasRecentMessages, isInitialRoomLoading, suppressInitialSkeleton]);
+
+  const showRoomSkeleton =
+    !suppressInitialSkeleton && !hasRecentMessages && isInitialRoomLoading && canRenderInitialSkeleton;
   const showHeaderLoadingIndicator = showRoomSkeleton || isRoomRefreshing;
+  const shouldDisableComposer = !hasRecentMessages && isInitialRoomLoading;
 
   return (
     <div
@@ -280,20 +305,17 @@ export function ChatRoom({
               : dictionary.connecting}
         </p>
         {showRoomSkeleton ? (
-          <div className="space-y-3">
-            <div className="rounded-[18px] border border-slate-200 bg-white px-3 py-2 shadow-soft">
-              <div className="h-4 w-24 animate-pulse rounded-full bg-brand-100" />
+          <div className="space-y-2 opacity-70 transition-opacity duration-150 ease-out">
+            <div className="h-3 w-20 rounded-full bg-slate-300/55" />
+            <div className="flex justify-start">
+              <div className="h-9 w-[52%] rounded-[16px] bg-slate-200/70" />
             </div>
-            {[0, 1, 2, 3].map((item) => (
-              <div key={item} className={item % 2 === 0 ? "flex justify-start" : "flex justify-end"}>
-                <div className={`max-w-[80%] ${item % 2 === 0 ? "items-start" : "items-end"}`}>
-                  <div className="h-12 animate-pulse rounded-[18px] bg-white shadow-soft" />
-                </div>
-              </div>
-            ))}
+            <div className="flex justify-end">
+              <div className="h-9 w-[44%] rounded-[16px] bg-slate-200/60" />
+            </div>
           </div>
         ) : messages.length > 0 ? (
-          <div className="space-y-0">
+          <div className="space-y-0 transition-opacity duration-150 ease-out">
             <div ref={topSentinelRef} className="h-px w-full" />
             {isOlderMessagesLoading ? (
               <div className="mb-2 flex justify-center">
@@ -371,7 +393,7 @@ export function ChatRoom({
         <ChatComposer
           chatId={room.id}
           senderLanguage={room.myLanguage}
-          disabled={showRoomSkeleton}
+          disabled={shouldDisableComposer}
           onOptimisticSend={onOptimisticSend}
           onSendFailed={onSendFailed}
           onSendSucceeded={onSendSucceeded}

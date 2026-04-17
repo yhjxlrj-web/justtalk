@@ -751,6 +751,7 @@ export function ChatRoomRealtime({
   const [hasOlderMessages, setHasOlderMessages] = useState(
     () => cachedRoomEntrySnapshot?.hasOlderMessages ?? false
   );
+  const [hasWarmRoomEntry, setHasWarmRoomEntry] = useState(() => hasRoomEntryCache);
   const [isInitialRoomLoading, setIsInitialRoomLoading] = useState(
     () => !preferImmediateEntry && !hasRoomEntryCache && seededMessages.length === 0
   );
@@ -1197,6 +1198,7 @@ export function ChatRoomRealtime({
 
       if (initialSnapshot?.messages?.length) {
         baseMessageCount = initialSnapshot.messages.length;
+        setHasWarmRoomEntry(true);
         applyInitialRoomBatch({
           firstUnreadMessageId: initialSnapshot.initialScrollTargetMessageId ?? null,
           hasOlderMessages: initialSnapshot.hasOlderMessages ?? false,
@@ -1215,6 +1217,7 @@ export function ChatRoomRealtime({
 
         if (handoffSnapshot?.messages?.length) {
           baseMessageCount = handoffSnapshot.messages.length;
+          setHasWarmRoomEntry(true);
           applyInitialRoomBatch({
             firstUnreadMessageId: handoffSnapshot.initialScrollTargetMessageId ?? null,
             hasOlderMessages: handoffSnapshot.hasOlderMessages ?? false,
@@ -2130,7 +2133,7 @@ export function ChatRoomRealtime({
       isInitialRoomLoading={isInitialRoomLoading}
       isOlderMessagesLoading={isOlderMessagesLoading}
       isRoomRefreshing={isRoomRefreshing}
-      suppressInitialSkeleton={preferImmediateEntry}
+      suppressInitialSkeleton={preferImmediateEntry || hasWarmRoomEntry}
       onDeleteHistory={() => {
         clearCachedRoomMessages(room.id);
         clearCachedRoomEntrySnapshot(room.id);
