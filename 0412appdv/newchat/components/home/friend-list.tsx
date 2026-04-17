@@ -116,29 +116,25 @@ export function formatLastActiveLabel(
 
 function FriendSection({
   title,
-  description,
   emptyTitle,
   emptyDescription,
   hasItems,
   children
 }: SectionProps) {
   return (
-    <div className="space-y-3">
-      <div>
-        <p className="text-[13px] font-semibold text-ink sm:text-sm">{title}</p>
-        {description ? (
-          <p className="mt-1 text-[12px] leading-5 text-slate-500 sm:text-sm sm:leading-6">
-            {description}
-          </p>
-        ) : null}
+    <div className="space-y-2.5">
+      <div className="border-t border-slate-200 pt-2.5">
+        <p className="text-[11px] font-medium tracking-[0.01em] text-slate-500 sm:text-xs">
+          {title}
+        </p>
       </div>
 
       {hasItems ? (
-        <div className="space-y-2.5">{children}</div>
+        <div className="divide-y divide-slate-200/90">{children}</div>
       ) : (
-        <div className="friend-list-surface rounded-[16px] px-4 py-5 text-center shadow-soft">
-          <p className="text-[15px] font-semibold text-ink sm:text-base">{emptyTitle}</p>
-          <p className="mt-1.5 text-[12px] leading-5 text-slate-500 sm:text-sm sm:leading-6">
+        <div className="space-y-1 px-0 py-3.5 text-left">
+          <p className="text-[13px] font-semibold text-ink/90 sm:text-sm">{emptyTitle}</p>
+          <p className="text-[12px] leading-5 text-slate-500 sm:text-sm sm:leading-6">
             {emptyDescription}
           </p>
         </div>
@@ -163,8 +159,8 @@ export function ProfileListRow({
   return (
     <div
       className={cn(
-        "friend-list-surface rounded-[16px] shadow-soft",
-        compactActions ? "px-4 py-2.5" : "px-4 py-3"
+        "bg-transparent",
+        compactActions ? "px-1 py-2" : "px-1 py-2.5"
       )}
     >
       <div
@@ -176,7 +172,7 @@ export function ProfileListRow({
       >
         <div
           className={cn(
-            "flex shrink-0 items-center justify-center overflow-hidden border border-slate-200 bg-brand-50 font-semibold text-brand-700 shadow-soft",
+            "flex shrink-0 items-center justify-center overflow-hidden bg-brand-50 font-semibold text-brand-700",
             compactActions
               ? "h-11 w-11 rounded-[15px] text-[14px]"
               : "h-12 w-12 rounded-[16px] text-[15px]"
@@ -283,10 +279,10 @@ function AcceptedFriendActions({ friend }: { friend: FriendListItem }) {
         <input type="hidden" name="friendId" value={friend.profile.id} />
         <PrimaryButton
           type="submit"
-          className="h-10 min-w-[86px] gap-1.5 rounded-[14px] px-3 text-[12px] font-semibold"
+          className="h-8 min-w-[74px] gap-1 rounded-[12px] px-2.5 text-[11px] font-semibold"
           disabled={isPending}
         >
-          <MessageCircle className="h-3.5 w-3.5 shrink-0 stroke-[2.25]" />
+          <MessageCircle className="h-3 w-3 shrink-0 stroke-[2.25]" />
           <span>{isPending ? dictionary.opening : dictionary.chat}</span>
         </PrimaryButton>
       </form>
@@ -536,7 +532,7 @@ function SwipeableAcceptedFriendRow({
   };
 
   return (
-    <div className="relative overflow-hidden rounded-[16px]">
+    <div className="relative overflow-hidden">
       <ManageAcceptedFriendshipActions
         friend={friend}
         onClose={onCloseActions}
@@ -547,7 +543,7 @@ function SwipeableAcceptedFriendRow({
         ref={rowRef}
         role="button"
         tabIndex={0}
-        className="relative rounded-[16px] outline-none transition-transform duration-200 ease-out will-change-transform focus-visible:ring-2 focus-visible:ring-brand-300"
+        className="relative outline-none transition-transform duration-200 ease-out will-change-transform focus-visible:ring-2 focus-visible:ring-brand-300"
         style={{
           transform: `translateX(${offsetX}px)`,
           touchAction: "pan-y"
@@ -697,7 +693,7 @@ export function FriendList({
   return (
     <>
       <div
-        className="space-y-3.5 sm:space-y-4"
+        className="space-y-3 sm:space-y-3.5"
         onClick={() => {
           if (openActionRowId) {
             setOpenActionRowId(null);
@@ -977,23 +973,21 @@ export function FriendListLoadingState({
   }
 
   return (
-    <div className="space-y-3.5 sm:space-y-4">
+    <div className="space-y-3 sm:space-y-3.5">
       {[0, 1].map((section) => (
-        <div key={section} className="space-y-3">
-          <div className="h-3.5 w-28 rounded-full bg-slate-200/70" />
-          <div className="h-3 w-44 rounded-full bg-slate-200/55" />
-          <div className="space-y-2.5">
+        <div key={section} className="space-y-2.5">
+          <div className="border-t border-slate-200 pt-2.5">
+            <div className="h-3 w-20 rounded-full bg-slate-200/65" />
+          </div>
+          <div className="divide-y divide-slate-200/90">
             {[0, 1].map((item) => (
-              <div
-                key={`${section}-${item}`}
-                className="friend-list-surface flex items-center gap-3 rounded-[16px] px-3.5 py-3 shadow-soft"
-              >
+              <div key={`${section}-${item}`} className="flex items-center gap-3 px-1 py-2">
                 <div className="h-11 w-11 rounded-[15px] bg-slate-200/70" />
                 <div className="flex-1 space-y-2">
                   <div className="h-3.5 w-28 rounded-full bg-slate-200/70" />
                   <div className="h-3 w-24 rounded-full bg-slate-200/55" />
                 </div>
-                <div className="h-8 w-[78px] rounded-[14px] bg-slate-200/60" />
+                <div className="h-8 w-[72px] rounded-[12px] bg-slate-200/60" />
               </div>
             ))}
           </div>
