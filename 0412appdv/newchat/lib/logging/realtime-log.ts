@@ -57,6 +57,6 @@ export function logRealtime(
     message: prefixedMessage,
     payload: payloadString
   }).catch((error) => {
-    console.warn(`${JT_LOG_PREFIX} native log bridge failed`, error);
+    console.error("[JT-REALTIME] plugin invoke failed", error);
   });
 }

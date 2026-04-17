@@ -859,6 +859,20 @@ export function ChatRoomRealtime({
     hasLoggedRouteShellMountRef.current = false;
   }, [room]);
 
+  useEffect(() => {
+    logRealtime("chat-room mounted", {
+      roomId: room.id,
+      viewerId
+    });
+
+    return () => {
+      logRealtime("chat-room unmounted", {
+        roomId: room.id,
+        viewerId
+      });
+    };
+  }, [room.id, viewerId]);
+
   const logTimingFromClick = useCallback(
     (eventName: string, extra?: Record<string, unknown>) => {
       if (typeof performance === "undefined") {
