@@ -738,6 +738,95 @@ export async function getChatRoomPreviews(client: any, userId: string): Promise<
   return previews;
 }
 
+export async function getLightweightChatRoomEntryData(
+  client: any,
+  roomId: string,
+  userId: string
+): Promise<ChatRoomSummary | null> {
+  if (!isUuid(roomId)) {
+    return null;
+  }
+
+  const { data: membershipRows, error: membershipError } = await getVerifiedChatMemberships(
+    client,
+    userId,
+    roomId
+  );
+
+  if (membershipError || !membershipRows?.length) {
+    return null;
+  }
+
+  const [{ data: chatRow, error: chatError }, { data: summaryRow }] = await Promise.all([
+    client
+      .from("chats")
+      .select("id, title, avatar_url, chat_type")
+      .eq("id", roomId)
+      .maybeSingle(),
+    client
+      .from("chat_room_summaries")
+      .select(
+        "room_id, user_id, peer_user_id, peer_display_name_snapshot, peer_avatar_snapshot, peer_preferred_language_snapshot, last_message_id, last_message_preview, last_message_created_at, unread_count, updated_at"
+      )
+      .eq("room_id", roomId)
+      .eq("user_id", userId)
+      .maybeSingle()
+  ]);
+
+  if (chatError || !chatRow) {
+    return null;
+  }
+
+  let peerUserId = summaryRow?.peer_user_id ?? null;
+  let peerDisplayName = summaryRow?.peer_display_name_snapshot?.trim() ?? "";
+  let peerAvatarUrl = summaryRow?.peer_avatar_snapshot ?? null;
+  let peerLanguageSnapshot = summaryRow?.peer_preferred_language_snapshot ?? null;
+
+  if (!peerUserId || !peerDisplayName || !peerAvatarUrl || !peerLanguageSnapshot) {
+    const { data: fallbackPeerRow } = await client
+      .from("chat_participants")
+      .select(
+        "user_id, display_name_snapshot, avatar_url_snapshot, preferred_language_snapshot"
+      )
+      .eq("chat_id", roomId)
+      .neq("user_id", userId)
+      .limit(1)
+      .maybeSingle();
+
+    if (fallbackPeerRow) {
+      peerUserId = peerUserId ?? fallbackPeerRow.user_id ?? null;
+      peerDisplayName = peerDisplayName || fallbackPeerRow.display_name_snapshot?.trim() || "";
+      peerAvatarUrl = peerAvatarUrl ?? fallbackPeerRow.avatar_url_snapshot ?? null;
+      peerLanguageSnapshot =
+        peerLanguageSnapshot ?? fallbackPeerRow.preferred_language_snapshot ?? null;
+    }
+  }
+
+  const roomName = peerDisplayName || chatRow.title?.trim() || "Conversation";
+  const peerLanguage = peerLanguageSnapshot ? getLocaleLabel(peerLanguageSnapshot) : undefined;
+  const avatarUrl = peerAvatarUrl ?? chatRow.avatar_url ?? undefined;
+
+  return {
+    id: roomId,
+    name: roomName,
+    topic: "",
+    languagePair: "",
+    avatarUrl,
+    unreadCount: Math.max(0, summaryRow?.unread_count ?? 0),
+    peerLanguage,
+    peerProfile: peerUserId
+      ? {
+          id: peerUserId,
+          displayName: roomName,
+          country: "",
+          preferredLanguage: peerLanguage ?? "",
+          avatarUrl: avatarUrl ?? undefined,
+          showLastSeen: true
+        }
+      : undefined
+  };
+}
+
 export async function getChatRoomSummary(
   client: any,
   roomId: string,

@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { ChatRoomRealtime } from "@/components/chat/chat-room-realtime";
 import { getServerUserOrRedirectOnInvalidSession } from "@/lib/auth/server-session";
-import { getChatRoomSummary } from "@/lib/chats/chats";
+import { getLightweightChatRoomEntryData } from "@/lib/chats/chats";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isUuid } from "@/lib/utils/uuid";
 
@@ -23,7 +23,7 @@ export default async function ChatRoomPage({
     redirect("/login");
   }
 
-  const room = await getChatRoomSummary(supabase, roomId, user.id);
+  const room = await getLightweightChatRoomEntryData(supabase, roomId, user.id);
 
   if (!room) {
     redirect("/home?tab=chats");
@@ -33,7 +33,6 @@ export default async function ChatRoomPage({
     <ChatRoomRealtime
       room={room}
       initialMessages={[]}
-      preferImmediateEntry
       viewerId={user.id}
     />
   );

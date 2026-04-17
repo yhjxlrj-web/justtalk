@@ -9,6 +9,7 @@ export type RoomEntrySnapshot = {
 };
 
 const roomEntryCache = new Map<string, RoomEntrySnapshot>();
+const roomInflightRequests = new Map<string, Promise<unknown>>();
 
 const RECENT_ROOMS_STORAGE_KEY = "talkbridge-recent-chat-rooms";
 
@@ -37,6 +38,33 @@ export function patchCachedRoomEntrySnapshot(
 
 export function clearCachedRoomEntrySnapshot(roomId: string) {
   roomEntryCache.delete(roomId);
+}
+
+export function getRoomInflightRequest<T>(key: string) {
+  const request = roomInflightRequests.get(key);
+  return (request as Promise<T> | undefined) ?? null;
+}
+
+export function getOrCreateRoomInflightRequest<T>(
+  key: string,
+  requestFactory: () => Promise<T>
+) {
+  const existingRequest = roomInflightRequests.get(key);
+
+  if (existingRequest) {
+    return existingRequest as Promise<T>;
+  }
+
+  const nextRequest = requestFactory().finally(() => {
+    const currentRequest = roomInflightRequests.get(key);
+
+    if (currentRequest === nextRequest) {
+      roomInflightRequests.delete(key);
+    }
+  });
+
+  roomInflightRequests.set(key, nextRequest);
+  return nextRequest;
 }
 
 export function recordRecentChatRoom(roomId: string) {

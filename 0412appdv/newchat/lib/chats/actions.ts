@@ -7,10 +7,12 @@ import type {
   OpenDirectChatState
 } from "@/lib/chats/action-state";
 import { resetChatRoomSummariesForRoom } from "@/lib/chats/room-summary";
-import { findOrCreateDirectChat } from "@/lib/chats/chats";
+import { findOrCreateDirectChat, getChatRoomSummary } from "@/lib/chats/chats";
 import { getFriendshipBetweenUsers } from "@/lib/friends/relationship";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseActionClient } from "@/lib/supabase/server";
+import { isUuid } from "@/lib/utils/uuid";
+import type { ChatRoomSummary } from "@/types/chat";
 
 async function ensureAcceptedFriendship(currentUserId: string, otherUserId: string) {
   const admin = createSupabaseAdminClient();
@@ -146,6 +148,42 @@ export async function openCommunityChatAction(
         error instanceof Error
           ? error.message
           : "We couldn't open this chat right now. Please try again."
+    };
+  }
+}
+
+export async function getChatRoomSummaryAction(roomId: string): Promise<{
+  room: ChatRoomSummary | null;
+  error?: string;
+}> {
+  if (!isUuid(roomId)) {
+    return {
+      room: null,
+      error: "Invalid room id."
+    };
+  }
+
+  const client = await createSupabaseActionClient();
+  const authResponse = await client.auth.getUser();
+  const user = authResponse.data?.user ?? null;
+
+  if (!user) {
+    return {
+      room: null,
+      error: "You need to sign in again."
+    };
+  }
+
+  try {
+    const room = await getChatRoomSummary(client, roomId, user.id);
+    return { room };
+  } catch (error) {
+    return {
+      room: null,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Unable to fetch room summary."
     };
   }
 }

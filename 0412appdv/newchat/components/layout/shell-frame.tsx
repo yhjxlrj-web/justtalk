@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { AndroidBackButtonHandler } from "@/components/layout/android-back-button-handler";
@@ -11,11 +11,29 @@ export function ShellFrame({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isChatRoom = pathname.startsWith("/chat/");
 
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    const chatRouteClassName = "chat-route-active";
+
+    if (isChatRoom) {
+      document.body.classList.add(chatRouteClassName);
+    } else {
+      document.body.classList.remove(chatRouteClassName);
+    }
+
+    return () => {
+      document.body.classList.remove(chatRouteClassName);
+    };
+  }, [isChatRoom]);
+
   return (
     <div
       className={cn(
         isChatRoom
-          ? "h-[100dvh] w-full overflow-hidden p-0"
+          ? "h-[100dvh] w-full overflow-hidden bg-[rgb(var(--bg))] p-0"
           : "mx-auto min-h-screen max-w-[1680px] px-0 pb-24 pt-4 sm:px-0 lg:px-8 lg:pb-8 lg:pt-6"
       )}
     >
@@ -24,7 +42,9 @@ export function ShellFrame({ children }: { children: React.ReactNode }) {
       <div
         className={cn(
           "flex min-w-0",
-          isChatRoom ? "h-[100dvh] w-full gap-0" : "min-h-[calc(100vh-2rem)] gap-4 lg:min-h-[calc(100vh-3rem)]"
+          isChatRoom
+            ? "h-[100dvh] w-full gap-0 bg-[rgb(var(--bg))]"
+            : "min-h-[calc(100vh-2rem)] gap-4 lg:min-h-[calc(100vh-3rem)]"
         )}
       >
         {!isChatRoom ? (
@@ -37,14 +57,14 @@ export function ShellFrame({ children }: { children: React.ReactNode }) {
           className={cn(
             "min-w-0 flex-1",
             isChatRoom
-              ? "h-[100dvh] w-full overflow-hidden p-0"
+              ? "h-[100dvh] w-full overflow-hidden bg-[rgb(var(--bg))] p-0"
               : "overflow-visible lg:overflow-hidden lg:rounded-[30px] lg:border lg:border-slate-200 lg:bg-[rgb(var(--surface))] lg:p-3 lg:shadow-soft"
           )}
         >
           <div
             className={cn(
               isChatRoom
-                ? "h-[100dvh] w-full min-w-0"
+                ? "h-[100dvh] w-full min-w-0 bg-[rgb(var(--bg))]"
                 : "min-w-0 lg:h-full lg:rounded-[26px] lg:border lg:border-slate-200 lg:bg-[rgb(var(--surface-strong))] lg:p-5"
             )}
           >

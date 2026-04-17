@@ -114,6 +114,12 @@ export function ChatListItem({
 
     const nowIso = new Date().toISOString();
 
+    if (typeof performance !== "undefined") {
+      performance.mark(`chat-click:${chat.roomId}`);
+    }
+
+    console.time(`[chat-open-total] ${chat.roomId}`);
+
     patchCachedChatPreview(chat.roomId, (preview) => ({
       ...preview,
       unreadCount: 0,

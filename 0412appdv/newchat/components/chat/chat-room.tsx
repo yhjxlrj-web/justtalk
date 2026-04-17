@@ -64,7 +64,7 @@ export function ChatRoom({
     senderLanguage?: string;
     createdAt: string;
   }) => void;
-  onQuickSendGreeting: () => void;
+  onQuickSendGreeting: (message: string) => void;
   onRetryMessage: (messageId: string) => Promise<void> | void;
   onSendFailed: (tempId: string) => void;
   onSendSucceeded: (
@@ -260,7 +260,7 @@ export function ChatRoom({
 
   return (
     <div
-      className="flex h-[100dvh] w-full flex-col overflow-hidden rounded-none bg-transparent shadow-none"
+      className="flex h-[100dvh] w-full flex-col overflow-hidden rounded-none bg-[rgb(var(--bg))] shadow-none"
       style={roomViewportStyle}
     >
       <RoomHeader room={room} onDeleteHistory={onDeleteHistory} isLoading={showHeaderLoadingIndicator} />

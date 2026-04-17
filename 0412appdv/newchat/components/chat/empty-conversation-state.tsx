@@ -5,7 +5,7 @@ import { GlassCard } from "@/components/ui/glass-card";
 export function EmptyConversationState({
   onQuickSend
 }: {
-  onQuickSend: () => void;
+  onQuickSend: (message: string) => void;
 }) {
   const dictionary = useDictionary();
 
@@ -15,7 +15,7 @@ export function EmptyConversationState({
       <PrimaryButton
         type="button"
         className="mt-3 rounded-full px-4 py-2.5 text-sm"
-        onClick={onQuickSend}
+        onClick={() => onQuickSend(dictionary.emptyConversationQuickSend)}
       >
         {dictionary.emptyConversationQuickSend}
       </PrimaryButton>

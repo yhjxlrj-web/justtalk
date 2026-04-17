@@ -1,6 +1,6 @@
 export function ChatRoomLoading() {
   return (
-    <div className="flex h-[100dvh] w-full flex-col overflow-hidden bg-transparent">
+    <div className="flex h-[100dvh] w-full flex-col overflow-hidden bg-[rgb(var(--bg))]">
       <div className="flex items-center justify-between gap-4 bg-transparent px-4 py-3">
         <div className="flex min-w-0 items-center gap-3">
           <div className="h-9 w-9 animate-pulse rounded-full bg-slate-200" />

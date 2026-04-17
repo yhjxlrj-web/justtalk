@@ -9,6 +9,7 @@ import {
 import { setCachedRoomMessages } from "@/components/chat/room-message-cache";
 import {
   getCachedRoomEntrySnapshot,
+  getOrCreateRoomInflightRequest,
   getRecentChatRooms,
   setCachedRoomEntrySnapshot
 } from "@/components/chat/room-entry-cache";
@@ -42,11 +43,15 @@ type PreloadParticipantRow = {
   last_seen_at: string | null;
 };
 
-const roomPreloadPromises = new Map<string, Promise<void>>();
 const roomRoutePrefetches = new Set<string>();
 const ROOM_PRELOAD_STAGGER_MS = 140;
 const UNREAD_ROOM_PRELOAD_LIMIT = 5;
 const UNREAD_ROOM_PRELOAD_STAGGER_MS = 80;
+const PENDING_TRANSLATION_PLACEHOLDER = "Translating...";
+
+function getRoomPrewarmInflightKey(roomId: string, viewerId: string) {
+  return `prewarm-room:${roomId}:${viewerId}`;
+}
 
 function waitForSequentialPreloadTurn(delayMs: number) {
   return new Promise<void>((resolve) => {
@@ -158,22 +163,14 @@ export function prewarmChatRoom(params: {
     return Promise.resolve();
   }
 
-  const existingPreloadPromise = roomPreloadPromises.get(roomId);
-
-  if (existingPreloadPromise) {
-    return existingPreloadPromise;
-  }
-
-  const preloadPromise = preloadRoom({
-    roomId,
-    supabase,
-    viewerId
-  }).finally(() => {
-    roomPreloadPromises.delete(roomId);
-  });
-
-  roomPreloadPromises.set(roomId, preloadPromise);
-  return preloadPromise;
+  const inflightKey = getRoomPrewarmInflightKey(roomId, viewerId);
+  return getOrCreateRoomInflightRequest(inflightKey, () =>
+    preloadRoom({
+      roomId,
+      supabase,
+      viewerId
+    })
+  );
 }
 
 async function preloadRoom(params: {
@@ -220,6 +217,57 @@ async function preloadRoom(params: {
   }
 
   const recentRows = [...((fetchedMessages ?? []) as PreloadMessageRow[])].reverse();
+
+  const baseMappedMessages = recentRows.map((message) => {
+    const outgoing = message.sender_id === viewerId;
+    const incomingDisplayText =
+      message.message_kind === "image"
+        ? message.original_text
+        : PENDING_TRANSLATION_PLACEHOLDER;
+    const displayText = outgoing ? message.original_text : incomingDisplayText;
+
+    return {
+      id: message.id,
+      clientId: message.client_message_id ?? undefined,
+      chatRoomId: message.chat_id,
+      senderId: message.sender_id,
+      direction: outgoing ? "outgoing" : "incoming",
+      messageType: (message.message_kind as "text" | "image") ?? "text",
+      originalText: message.original_text,
+      displayText,
+      body: displayText,
+      originalBody: outgoing ? undefined : message.original_text,
+      senderLanguage: message.original_language,
+      targetLanguage: message.original_language,
+      language: message.original_language,
+      timestamp: formatChatTimestamp(message.created_at),
+      createdAt: message.created_at,
+      imageUrl: message.attachment_url ?? undefined,
+      attachmentName: message.attachment_name ?? undefined,
+      attachmentContentType: message.attachment_content_type ?? undefined,
+      canRetry: outgoing,
+      deliveryStatus: outgoing ? ("sent" as const) : undefined,
+      readStatus: null,
+      reactions: []
+    } satisfies ChatMessage;
+  });
+
+  const baseSnapshot = {
+    initialScrollTargetMessageId: null,
+    messages: baseMappedMessages,
+    hasOlderMessages: false,
+    otherUserLastSeenAt,
+    preloadedAt: Date.now()
+  };
+
+  setCachedRoomMessages(roomId, baseMappedMessages);
+  setCachedRoomEntrySnapshot(roomId, baseSnapshot);
+
+  console.log("room prewarm base cached", {
+    roomId,
+    viewerId,
+    baseMessageCount: baseMappedMessages.length
+  });
 
   const { data: firstUnreadRows, error: firstUnreadError } = await supabase
     .from("messages")

@@ -12,7 +12,9 @@ import {
 import { useCurrentLocale } from "@/components/providers/dictionary-provider";
 import {
   clearCachedRoomEntrySnapshot,
+  getOrCreateRoomInflightRequest,
   getCachedRoomEntrySnapshot,
+  getRoomInflightRequest,
   recordRecentChatRoom,
   setCachedRoomEntrySnapshot
 } from "@/components/chat/room-entry-cache";
@@ -23,6 +25,7 @@ import {
 } from "@/components/chat/room-message-cache";
 import { initialSendMessageFormState } from "@/lib/messages/action-state";
 import { sendMessageAction } from "@/lib/messages/actions";
+import { getChatRoomSummaryAction } from "@/lib/chats/actions";
 import { isChatMessageTooLong } from "@/lib/messages/constants";
 import {
   INITIAL_ROOM_MESSAGE_LIMIT,
@@ -88,18 +91,32 @@ type RoomMessageBatch = {
   otherUserLastSeenAt: string | null;
 };
 
-const REACTION_ORDER = ["?ㅿ툘", "?몟", "?ㄳ", "?삲", "?몞", "?솋"] as const;
+type RoomBaseMessageBatch = {
+  messages: ChatMessage[];
+  otherUserLastSeenAt: string | null;
+  viewerLastSeenAt: string | null;
+};
 
-const QUICK_GREETING_MESSAGE = "안녕하세요 😊";
+const REACTION_ORDER = ["?ㅿ툘", "?몟", "?ㄳ", "?삲", "?몞", "?솋"] as const;
 
 const MESSAGE_STATUS_PATCH_BUFFER_MS = 360;
 const HOME_CACHE_PREWARM_SUMMARY_LIMIT = 12;
 const ROOM_ENTRY_SUMMARY_PREWARM_DELAY_MS = 900;
+const PREWARM_HANDOFF_WAIT_MS = 120;
 const PENDING_TRANSLATION_PLACEHOLDER = "…";
-const initialRoomMessageBatchInflight = new Map<string, Promise<RoomMessageBatch>>();
 
 function getRoomEntryKey(roomId: string, viewerId: string) {
   return `${roomId}:${viewerId}`;
+}
+
+function getRoomInflightKey(stage: string, roomId: string, viewerId: string) {
+  return `${stage}:${roomId}:${viewerId}`;
+}
+
+function waitForHandoff(ms: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 function fetchInitialRoomMessageBatchWithDedupe(params: {
@@ -107,23 +124,10 @@ function fetchInitialRoomMessageBatchWithDedupe(params: {
   supabase: any;
   viewerId: string;
 }) {
-  const key = getRoomEntryKey(params.roomId, params.viewerId);
-  const inflightRequest = initialRoomMessageBatchInflight.get(key);
-
-  if (inflightRequest) {
-    return inflightRequest;
-  }
-
-  const nextRequest = fetchInitialRoomMessageBatch(params).finally(() => {
-    const currentRequest = initialRoomMessageBatchInflight.get(key);
-
-    if (currentRequest === nextRequest) {
-      initialRoomMessageBatchInflight.delete(key);
-    }
-  });
-
-  initialRoomMessageBatchInflight.set(key, nextRequest);
-  return nextRequest;
+  const key = getRoomInflightKey("room-initial-full", params.roomId, params.viewerId);
+  return getOrCreateRoomInflightRequest<RoomMessageBatch>(key, () =>
+    fetchInitialRoomMessageBatch(params)
+  );
 }
 
 function sortMessages(messages: ChatMessage[]) {
@@ -397,11 +401,18 @@ async function hydrateFetchedMessages(params: {
   let translationsByMessageId = new Map<string, RealtimeTranslationRow>();
   let reactionsByMessageId = new Map<string, RealtimeReactionRow[]>();
 
-  const { data: fetchedTranslations, error: translationsError } = await supabase
-    .from("message_translations")
-    .select("id, message_id, target_user_id, target_language, translated_text, created_at")
-    .in("message_id", messageIds)
-    .eq("target_user_id", viewerId);
+  const [{ data: fetchedTranslations, error: translationsError }, { data: fetchedReactions, error: reactionsError }] =
+    await Promise.all([
+      supabase
+        .from("message_translations")
+        .select("id, message_id, target_user_id, target_language, translated_text, created_at")
+        .in("message_id", messageIds)
+        .eq("target_user_id", viewerId),
+      supabase
+        .from("message_reactions")
+        .select("id, message_id, user_id, emoji, created_at")
+        .in("message_id", messageIds)
+    ]);
 
   if (translationsError) {
     console.error("Failed to load translations:", translationsError);
@@ -413,11 +424,6 @@ async function hydrateFetchedMessages(params: {
       ])
     );
   }
-
-  const { data: fetchedReactions, error: reactionsError } = await supabase
-    .from("message_reactions")
-    .select("id, message_id, user_id, emoji, created_at")
-    .in("message_id", messageIds);
 
   if (reactionsError) {
     console.error("Failed to load reactions:", reactionsError);
@@ -435,6 +441,93 @@ async function hydrateFetchedMessages(params: {
     reactionsByMessageId,
     viewerId
   });
+}
+
+function fetchInitialRoomBaseMessageBatchWithDedupe(params: {
+  roomId: string;
+  supabase: any;
+  viewerId: string;
+}) {
+  const key = getRoomInflightKey("room-initial-base", params.roomId, params.viewerId);
+  return getOrCreateRoomInflightRequest<RoomBaseMessageBatch>(key, () =>
+    fetchInitialRoomBaseMessageBatch(params)
+  );
+}
+
+async function fetchInitialRoomBaseMessageBatch(params: {
+  roomId: string;
+  supabase: any;
+  viewerId: string;
+}): Promise<RoomBaseMessageBatch> {
+  const { roomId, supabase, viewerId } = params;
+  const [{ data: participants, error: participantsError }, { data: fetchedRecentMessages, error: messagesError }] =
+    await Promise.all([
+      supabase.from("chat_participants").select("user_id, last_seen_at").eq("chat_id", roomId),
+      supabase
+        .from("messages")
+        .select(
+          "id, chat_id, sender_id, original_text, original_language, created_at, client_message_id, message_kind, attachment_url, attachment_name, attachment_content_type"
+        )
+        .eq("chat_id", roomId)
+        .order("created_at", { ascending: false })
+        .limit(INITIAL_ROOM_MESSAGE_LIMIT)
+    ]);
+
+  if (participantsError) {
+    throw participantsError;
+  }
+
+  if (messagesError) {
+    throw messagesError;
+  }
+
+  const participantRows = (participants ?? []) as RealtimeParticipantRow[];
+  const viewerParticipant =
+    participantRows.find((participant) => participant.user_id === viewerId) ?? null;
+  const otherParticipant =
+    participantRows.find((participant) => participant.user_id !== viewerId) ?? null;
+  const viewerLastSeenAt = viewerParticipant?.last_seen_at ?? null;
+  const otherUserLastSeenAt = otherParticipant?.last_seen_at ?? null;
+
+  const orderedRows = [...((fetchedRecentMessages ?? []) as RealtimeMessageRow[])].reverse();
+  const messages = sortMessages(
+    orderedRows.map((message) => {
+      const outgoing = message.sender_id === viewerId;
+      const displayText =
+        outgoing || message.message_kind === "image"
+          ? message.original_text
+          : PENDING_TRANSLATION_PLACEHOLDER;
+
+      return {
+        id: message.id,
+        clientId: message.client_message_id ?? undefined,
+        chatRoomId: message.chat_id,
+        senderId: message.sender_id,
+        direction: outgoing ? "outgoing" : "incoming",
+        messageType: (message.message_kind as "text" | "image") ?? "text",
+        originalText: message.original_text,
+        displayText,
+        body: displayText,
+        originalBody: outgoing ? undefined : message.original_text,
+        senderLanguage: message.original_language,
+        targetLanguage: message.original_language,
+        language: message.original_language,
+        timestamp: formatChatTimestamp(message.created_at),
+        createdAt: message.created_at,
+        imageUrl: message.attachment_url ?? undefined,
+        attachmentName: message.attachment_name ?? undefined,
+        attachmentContentType: message.attachment_content_type ?? undefined,
+        canRetry: outgoing,
+        reactions: []
+      } satisfies ChatMessage;
+    })
+  );
+
+  return {
+    messages,
+    otherUserLastSeenAt,
+    viewerLastSeenAt
+  };
 }
 
 async function fetchInitialRoomMessageBatch(params: {
@@ -638,6 +731,7 @@ export function ChatRoomRealtime({
   viewerId: string;
 }) {
   const locale = useCurrentLocale();
+  const [roomState, setRoomState] = useState(room);
   const cachedRoomEntrySnapshot = getCachedRoomEntrySnapshot(room.id);
   const cachedMessages =
     getCachedRoomMessages(room.id) ?? cachedRoomEntrySnapshot?.messages ?? null;
@@ -701,8 +795,77 @@ export function ChatRoomRealtime({
     messageId: string;
     startedAt: number;
   } | null>(null);
+  const hasLoggedFirstMessagePaintRef = useRef(false);
+  const hasLoggedEmptyRoomPaintRef = useRef(false);
+  const hasLoggedRouteShellMountRef = useRef(false);
 
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
+
+  useEffect(() => {
+    setRoomState(room);
+    hasLoggedFirstMessagePaintRef.current = false;
+    hasLoggedEmptyRoomPaintRef.current = false;
+    hasLoggedRouteShellMountRef.current = false;
+  }, [room]);
+
+  const logTimingFromClick = useCallback(
+    (eventName: string, extra?: Record<string, unknown>) => {
+      if (typeof performance === "undefined") {
+        return;
+      }
+
+      const clickMarkName = `chat-click:${room.id}`;
+      const clickMark = performance.getEntriesByName(clickMarkName).at(-1);
+      const elapsedSinceClick = clickMark ? performance.now() - clickMark.startTime : null;
+
+      console.log("chat room timing", {
+        roomId: room.id,
+        eventName,
+        elapsedSinceClickMs:
+          elapsedSinceClick !== null ? Math.round(elapsedSinceClick) : null,
+        ...extra
+      });
+    },
+    [room.id]
+  );
+
+  useEffect(() => {
+    if (hasLoggedRouteShellMountRef.current) {
+      return;
+    }
+
+    hasLoggedRouteShellMountRef.current = true;
+    logTimingFromClick("route-shell-mounted");
+  }, [logTimingFromClick]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    console.time(`[chat-summary-patch] ${room.id}`);
+    logTimingFromClick("summary-patch-start");
+
+    void (async () => {
+      const result = await getChatRoomSummaryAction(room.id);
+
+      if (cancelled) {
+        return;
+      }
+
+      if (result.room) {
+        setRoomState(result.room);
+      }
+
+      console.timeEnd(`[chat-summary-patch] ${room.id}`);
+      logTimingFromClick("summary-patch-complete", {
+        hasRoomSummary: !!result.room,
+        summaryError: result.error ?? null
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [logTimingFromClick, room.id]);
 
   const refreshReactions = useCallback(
     async (messageIds: string[]) => {
@@ -987,6 +1150,30 @@ export function ChatRoomRealtime({
     });
   }, [room.id, supabase, viewerId]);
 
+  const applyInitialRoomBatch = useCallback(
+    (params: {
+      firstUnreadMessageId: string | null;
+      hasOlderMessages: boolean;
+      messages: ChatMessage[];
+      otherUserLastSeenAt: string | null;
+    }) => {
+      otherUserLastSeenAtRef.current = params.otherUserLastSeenAt;
+      setOtherUserLastSeenAt(params.otherUserLastSeenAt);
+      setInitialScrollTargetMessageId(params.firstUnreadMessageId);
+      setHasResolvedInitialScrollTarget(true);
+      setHasOlderMessages(params.hasOlderMessages);
+      setHasRecentMessages(params.messages.length > 0);
+      setMessages((current) =>
+        mergeServerMessages({
+          current,
+          serverMessages: params.messages,
+          currentStatusMap: messageStatusMapRef.current
+        })
+      );
+    },
+    []
+  );
+
   const loadInitialRoomState = useCallback(async () => {
     if (hasSeededMessages || preferImmediateEntry) {
       setIsRoomRefreshing(true);
@@ -995,28 +1182,101 @@ export function ChatRoomRealtime({
     }
     setIsRealtimeReady(false);
 
+    const prewarmInflightKey = getRoomInflightKey("prewarm-room", room.id, viewerId);
+
     try {
-      const batch = await fetchInitialRoomMessageBatchWithDedupe({
-        roomId: room.id,
-        supabase,
-        viewerId
+      console.time(`[room-init-base] ${room.id}`);
+      logTimingFromClick("room-init-base-start", {
+        hasSeededMessages,
+        preferImmediateEntry
       });
 
-      otherUserLastSeenAtRef.current = batch.otherUserLastSeenAt;
-      setOtherUserLastSeenAt(batch.otherUserLastSeenAt);
-      setInitialScrollTargetMessageId(batch.firstUnreadMessageId);
-      setHasResolvedInitialScrollTarget(true);
-      setHasOlderMessages(batch.hasOlderMessages);
-      setHasRecentMessages(batch.messages.length > 0);
-      setMessages((current) =>
-        mergeServerMessages({
-          current,
-          serverMessages: batch.messages,
-          currentStatusMap: messageStatusMapRef.current
-        })
-      );
+      const initialSnapshot = getCachedRoomEntrySnapshot(room.id);
+      let usedCachedSnapshot = false;
+      let baseMessageCount = 0;
+
+      if (initialSnapshot?.messages?.length) {
+        baseMessageCount = initialSnapshot.messages.length;
+        applyInitialRoomBatch({
+          firstUnreadMessageId: initialSnapshot.initialScrollTargetMessageId ?? null,
+          hasOlderMessages: initialSnapshot.hasOlderMessages ?? false,
+          messages: initialSnapshot.messages,
+          otherUserLastSeenAt: initialSnapshot.otherUserLastSeenAt ?? null
+        });
+        usedCachedSnapshot = true;
+      } else {
+        const prewarmInflight = getRoomInflightRequest<void>(prewarmInflightKey);
+
+        if (prewarmInflight) {
+          await Promise.race([prewarmInflight, waitForHandoff(PREWARM_HANDOFF_WAIT_MS)]);
+        }
+
+        const handoffSnapshot = getCachedRoomEntrySnapshot(room.id);
+
+        if (handoffSnapshot?.messages?.length) {
+          baseMessageCount = handoffSnapshot.messages.length;
+          applyInitialRoomBatch({
+            firstUnreadMessageId: handoffSnapshot.initialScrollTargetMessageId ?? null,
+            hasOlderMessages: handoffSnapshot.hasOlderMessages ?? false,
+            messages: handoffSnapshot.messages,
+            otherUserLastSeenAt: handoffSnapshot.otherUserLastSeenAt ?? null
+          });
+          usedCachedSnapshot = true;
+        } else {
+          const baseBatch = await fetchInitialRoomBaseMessageBatchWithDedupe({
+            roomId: room.id,
+            supabase,
+            viewerId
+          });
+          baseMessageCount = baseBatch.messages.length;
+
+          applyInitialRoomBatch({
+            firstUnreadMessageId: null,
+            hasOlderMessages: false,
+            messages: baseBatch.messages,
+            otherUserLastSeenAt: baseBatch.otherUserLastSeenAt
+          });
+        }
+      }
+
       setIsRealtimeReady(true);
       queueDeferredReadUpdate();
+
+      logTimingFromClick("room-init-base-complete", {
+        usedCachedSnapshot,
+        baseMessageCount
+      });
+      console.timeEnd(`[room-init-base] ${room.id}`);
+
+      console.time(`[room-init-enrich] ${room.id}`);
+      logTimingFromClick("room-init-enrich-start");
+
+      void (async () => {
+        try {
+          const enrichedBatch = await fetchInitialRoomMessageBatchWithDedupe({
+            roomId: room.id,
+            supabase,
+            viewerId
+          });
+
+          applyInitialRoomBatch({
+            firstUnreadMessageId: enrichedBatch.firstUnreadMessageId,
+            hasOlderMessages: enrichedBatch.hasOlderMessages,
+            messages: enrichedBatch.messages,
+            otherUserLastSeenAt: enrichedBatch.otherUserLastSeenAt
+          });
+
+          logTimingFromClick("room-init-enrich-complete", {
+            enrichedMessageCount: enrichedBatch.messages.length,
+            hasOlderMessages: enrichedBatch.hasOlderMessages
+          });
+        } catch (error) {
+          console.error("Failed to enrich initial room state:", error);
+          logTimingFromClick("room-init-enrich-failed");
+        } finally {
+          console.timeEnd(`[room-init-enrich] ${room.id}`);
+        }
+      })();
     } catch (error) {
       console.error("Failed to load initial room state:", error);
       setInitialScrollTargetMessageId(null);
@@ -1027,7 +1287,9 @@ export function ChatRoomRealtime({
       setIsRoomRefreshing(false);
     }
   }, [
+    applyInitialRoomBatch,
     hasSeededMessages,
+    logTimingFromClick,
     preferImmediateEntry,
     queueDeferredReadUpdate,
     room.id,
@@ -1243,7 +1505,7 @@ export function ChatRoomRealtime({
         clientId,
         body: trimmedMessage,
         originalText: trimmedMessage,
-        senderLanguage: room.myLanguage,
+        senderLanguage: roomState.myLanguage,
         createdAt: new Date().toISOString()
       };
 
@@ -1266,7 +1528,7 @@ export function ChatRoomRealtime({
 
       handleSendSucceeded(optimisticMessage.id, result.message);
     },
-    [handleOptimisticSend, handleSendFailed, handleSendSucceeded, locale, room.id, room.myLanguage]
+    [handleOptimisticSend, handleSendFailed, handleSendSucceeded, locale, room.id, roomState.myLanguage]
   );
 
   const handleRetryMessage = useCallback(
@@ -1495,6 +1757,59 @@ export function ChatRoomRealtime({
   useEffect(() => {
     setHasRecentMessages(messages.length > 0);
   }, [messages.length]);
+
+  useEffect(() => {
+    if (messages.length === 0 || hasLoggedFirstMessagePaintRef.current) {
+      return;
+    }
+
+    hasLoggedFirstMessagePaintRef.current = true;
+
+    const frameHandle = window.requestAnimationFrame(() => {
+      logTimingFromClick("first-message-paint", {
+        renderedMessageCount: messages.length
+      });
+
+      try {
+        console.timeEnd(`[chat-open-total] ${room.id}`);
+      } catch {
+        // no-op when timer was not started from chat list click
+      }
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameHandle);
+    };
+  }, [logTimingFromClick, messages.length, room.id]);
+
+  useEffect(() => {
+    if (
+      hasLoggedFirstMessagePaintRef.current ||
+      hasLoggedEmptyRoomPaintRef.current ||
+      messages.length > 0 ||
+      !hasResolvedInitialScrollTarget ||
+      isInitialRoomLoading ||
+      isRoomRefreshing
+    ) {
+      return;
+    }
+
+    hasLoggedEmptyRoomPaintRef.current = true;
+    logTimingFromClick("empty-room-paint");
+
+    try {
+      console.timeEnd(`[chat-open-total] ${room.id}`);
+    } catch {
+      // no-op when timer was not started from chat list click
+    }
+  }, [
+    hasResolvedInitialScrollTarget,
+    isInitialRoomLoading,
+    isRoomRefreshing,
+    logTimingFromClick,
+    messages.length,
+    room.id
+  ]);
 
   useEffect(() => {
     const pendingCommit = pendingOptimisticCommitRef.current;
@@ -1767,6 +2082,7 @@ export function ChatRoomRealtime({
       .subscribe((status) => {
         if (status === "SUBSCRIBED") {
           setConnectionState("connected");
+          logTimingFromClick("realtime-subscribed");
         } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
           setConnectionState("reconnecting");
         } else {
@@ -1779,6 +2095,7 @@ export function ChatRoomRealtime({
     };
   }, [
     isRealtimeReady,
+    logTimingFromClick,
     queueMessageStatusPatch,
     refreshReactions,
     room.id,
@@ -1802,7 +2119,7 @@ export function ChatRoomRealtime({
 
   return (
     <ChatRoom
-      room={room}
+      room={roomState}
       messages={messages}
       messageStatusMap={messageStatusMap}
       connectionState={connectionState}
@@ -1823,8 +2140,8 @@ export function ChatRoomRealtime({
       }}
       onLoadOlderMessages={loadOlderMessages}
       onOptimisticSend={handleOptimisticSend}
-      onQuickSendGreeting={() => {
-        void sendTextMessage(QUICK_GREETING_MESSAGE);
+      onQuickSendGreeting={(message) => {
+        void sendTextMessage(message);
       }}
       onRetryMessage={handleRetryMessage}
       onSendFailed={handleSendFailed}
