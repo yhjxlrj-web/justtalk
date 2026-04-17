@@ -72,6 +72,14 @@ type RealtimeReactionRow = {
   created_at: string;
 };
 
+type RealtimeSummaryUpdateRow = {
+  room_id: string;
+  user_id: string;
+  last_message_id?: string | null;
+  last_message_preview?: string | null;
+  last_message_created_at?: string | null;
+};
+
 type ChatRoomSummaryCacheRow = {
   room_id: string;
   peer_user_id?: string | null;
@@ -719,6 +727,47 @@ async function fetchOlderRoomMessageBatch(params: {
   };
 }
 
+function mapRealtimeRowToMessage(params: {
+  row: RealtimeMessageRow;
+  viewerId: string;
+  translatedText?: string | null;
+  translatedLanguage?: string | null;
+}): ChatMessage {
+  const { row, viewerId, translatedText, translatedLanguage } = params;
+  const isOutgoing = row.sender_id === viewerId;
+  const isImageMessage = row.message_kind === "image";
+  const incomingDisplayText =
+    translatedText && translatedText.trim().length > 0
+      ? translatedText
+      : PENDING_TRANSLATION_PLACEHOLDER;
+  const displayText = isOutgoing || isImageMessage ? row.original_text : incomingDisplayText;
+
+  return {
+    id: row.id,
+    clientId: row.client_message_id ?? undefined,
+    chatRoomId: row.chat_id,
+    senderId: row.sender_id,
+    direction: isOutgoing ? "outgoing" : "incoming",
+    messageType: (row.message_kind as "text" | "image") ?? "text",
+    originalText: row.original_text,
+    displayText,
+    body: displayText,
+    originalBody: isOutgoing ? undefined : row.original_text,
+    senderLanguage: row.original_language,
+    targetLanguage: isOutgoing
+      ? row.original_language
+      : translatedLanguage ?? row.original_language,
+    language: isOutgoing ? row.original_language : translatedLanguage ?? row.original_language,
+    timestamp: formatChatTimestamp(row.created_at),
+    createdAt: row.created_at,
+    imageUrl: row.attachment_url ?? undefined,
+    attachmentName: row.attachment_name ?? undefined,
+    attachmentContentType: row.attachment_content_type ?? undefined,
+    canRetry: isOutgoing,
+    reactions: []
+  };
+}
+
 export function ChatRoomRealtime({
   initialMessages,
   preferImmediateEntry = false,
@@ -1080,6 +1129,108 @@ export function ChatRoomRealtime({
       );
     },
     [room.id]
+  );
+
+  const appendMissingMessageById = useCallback(
+    async (params: {
+      messageId: string;
+      reason: "summary-update" | "translation-insert";
+      translatedLanguage?: string | null;
+      translatedText?: string | null;
+    }) => {
+      const { messageId, reason, translatedLanguage, translatedText } = params;
+
+      if (!messageId) {
+        console.log("dedupe skipped reason", {
+          roomId: room.id,
+          reason: "missing-message-id",
+          source: reason
+        });
+        return;
+      }
+
+      if (messageIdsRef.current.has(messageId)) {
+        console.log("dedupe skipped reason", {
+          roomId: room.id,
+          messageId,
+          reason: "already-present-before-fallback",
+          source: reason
+        });
+        return;
+      }
+
+      const { data: fetchedMessage, error: messageError } = (await supabase
+        .from("messages")
+        .select(
+          "id, chat_id, sender_id, original_text, original_language, created_at, client_message_id, message_kind, attachment_url, attachment_name, attachment_content_type"
+        )
+        .eq("chat_id", room.id)
+        .eq("id", messageId)
+        .maybeSingle()) as {
+        data: RealtimeMessageRow | null;
+        error: { message?: string } | null;
+      };
+
+      if (messageError || !fetchedMessage) {
+        console.log("dedupe skipped reason", {
+          roomId: room.id,
+          messageId,
+          reason: "fallback-fetch-failed",
+          source: reason,
+          error: messageError
+        });
+        return;
+      }
+
+      console.log("subscription event received", {
+        source: reason,
+        roomId: room.id,
+        messageId: fetchedMessage.id,
+        senderId: fetchedMessage.sender_id,
+        receivedRoomId: fetchedMessage.chat_id
+      });
+
+      setMessages((current) => {
+        if (current.some((message) => message.id === fetchedMessage.id)) {
+          console.log("dedupe skipped reason", {
+            roomId: room.id,
+            messageId: fetchedMessage.id,
+            reason: "already-present-on-fallback-append",
+            source: reason
+          });
+          return current;
+        }
+
+        const nextMessages = sortMessages([
+          ...current,
+          mapRealtimeRowToMessage({
+            row: fetchedMessage,
+            viewerId,
+            translatedLanguage,
+            translatedText
+          })
+        ]);
+
+        console.log("setMessages append executed", {
+          roomId: room.id,
+          messageId: fetchedMessage.id,
+          source: reason,
+          previousCount: current.length,
+          nextCount: nextMessages.length
+        });
+
+        return nextMessages;
+      });
+
+      syncChatPreviewCache({
+        debugReason: `room-realtime-${reason}-append`,
+        messageId: fetchedMessage.id,
+        messageType: fetchedMessage.message_kind ?? undefined,
+        previewText: fetchedMessage.original_text,
+        createdAt: fetchedMessage.created_at
+      });
+    },
+    [room.id, supabase, syncChatPreviewCache, viewerId]
   );
 
   const prewarmChatSummariesForHomeReturn = useCallback(async () => {
@@ -1878,6 +2029,10 @@ export function ChatRoomRealtime({
     }
 
     const channel = supabase.channel(`chat-room:${room.id}:${viewerId}`);
+    console.log("subscription created", {
+      roomId: room.id,
+      viewerId
+    });
 
     channel
       .on(
@@ -1888,15 +2043,36 @@ export function ChatRoomRealtime({
           table: "messages",
           filter: `chat_id=eq.${room.id}`
         },
-        async (payload) => {
+        (payload) => {
           const row = payload.new as RealtimeMessageRow;
+          console.log("subscription event received", {
+            source: "messages-insert",
+            roomId: room.id,
+            receivedRoomId: row.chat_id,
+            messageId: row.id,
+            senderId: row.sender_id
+          });
 
-          if (row.sender_id !== viewerId) {
-            await updateViewerLastSeen();
+          if (row.chat_id !== room.id) {
+            console.log("dedupe skipped reason", {
+              roomId: room.id,
+              receivedRoomId: row.chat_id,
+              messageId: row.id,
+              reason: "room-mismatch",
+              source: "messages-insert"
+            });
+            return;
           }
 
+          let appendMode: "replace-optimistic" | "append-new" | null = null;
           setMessages((current) => {
             if (current.some((message) => message.id === row.id)) {
+              console.log("dedupe skipped reason", {
+                roomId: room.id,
+                messageId: row.id,
+                reason: "already-present",
+                source: "messages-insert"
+              });
               return current;
             }
 
@@ -1914,6 +2090,7 @@ export function ChatRoomRealtime({
             let nextMessages = current;
 
             if (matchingTemp) {
+              appendMode = "replace-optimistic";
               nextMessages = current.map((message) =>
                 message.id === matchingTemp.id
                   ? {
@@ -1939,6 +2116,7 @@ export function ChatRoomRealtime({
                   : message
               );
             } else {
+              appendMode = "append-new";
               nextMessages = [
                 ...current,
                 {
@@ -1972,6 +2150,15 @@ export function ChatRoomRealtime({
               ];
             }
 
+            console.log("setMessages append executed", {
+              roomId: room.id,
+              messageId: row.id,
+              senderId: row.sender_id,
+              appendMode,
+              previousCount: current.length,
+              nextCount: nextMessages.length
+            });
+
             return nextMessages;
           });
 
@@ -1991,6 +2178,8 @@ export function ChatRoomRealtime({
             }
 
             queueMessageStatusPatch(sentStatusPatch);
+          } else {
+            void queueDeferredReadUpdate();
           }
 
           syncChatPreviewCache({
@@ -2013,9 +2202,28 @@ export function ChatRoomRealtime({
         },
         (payload) => {
           const row = payload.new as RealtimeTranslationRow;
+          console.log("subscription event received", {
+            source: "message-translation-insert",
+            roomId: room.id,
+            receivedRoomId: room.id,
+            messageId: row.message_id,
+            senderId: null
+          });
 
-          setMessages((current) =>
-            current.map((message) =>
+          if (!row.message_id) {
+            console.log("dedupe skipped reason", {
+              roomId: room.id,
+              reason: "missing-message-id",
+              source: "message-translation-insert"
+            });
+            return;
+          }
+
+          const hadMessageBeforePatch = messageIdsRef.current.has(row.message_id);
+
+          setMessages((current) => {
+            let didPatch = false;
+            const patched = current.map((message) =>
               message.id === row.message_id && message.direction === "incoming"
                 ? {
                     ...message,
@@ -2025,8 +2233,46 @@ export function ChatRoomRealtime({
                     language: row.target_language
                   }
                 : message
-            )
-          );
+            );
+
+            for (let index = 0; index < current.length; index += 1) {
+              if (current[index] !== patched[index]) {
+                didPatch = true;
+                break;
+              }
+            }
+
+            if (didPatch) {
+              console.log("setMessages append executed", {
+                roomId: room.id,
+                messageId: row.message_id,
+                senderId: null,
+                appendMode: "translation-patch",
+                previousCount: current.length,
+                nextCount: patched.length
+              });
+            } else {
+              console.log("dedupe skipped reason", {
+                roomId: room.id,
+                messageId: row.message_id,
+                reason: hadMessageBeforePatch
+                  ? "translation-patch-no-change"
+                  : "translation-target-message-not-found",
+                source: "message-translation-insert"
+              });
+            }
+
+            return patched;
+          });
+
+          if (!hadMessageBeforePatch) {
+            void appendMissingMessageById({
+              messageId: row.message_id,
+              reason: "translation-insert",
+              translatedText: row.translated_text,
+              translatedLanguage: row.target_language
+            });
+          }
         }
       )
       .on(
@@ -2082,6 +2328,43 @@ export function ChatRoomRealtime({
           void refreshReactions([row.message_id]);
         }
       )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "chat_room_summaries",
+          filter: `user_id=eq.${viewerId}`
+        },
+        (payload) => {
+          const row = payload.new as RealtimeSummaryUpdateRow;
+          if (row.room_id !== room.id) {
+            return;
+          }
+
+          console.log("subscription event received", {
+            source: "chat-room-summary-update",
+            roomId: room.id,
+            receivedRoomId: row.room_id,
+            messageId: row.last_message_id ?? null,
+            senderId: null
+          });
+
+          if (!row.last_message_id) {
+            console.log("dedupe skipped reason", {
+              roomId: room.id,
+              reason: "summary-missing-last-message-id",
+              source: "chat-room-summary-update"
+            });
+            return;
+          }
+
+          void appendMissingMessageById({
+            messageId: row.last_message_id,
+            reason: "summary-update"
+          });
+        }
+      )
       .subscribe((status) => {
         if (status === "SUBSCRIBED") {
           setConnectionState("connected");
@@ -2094,17 +2377,22 @@ export function ChatRoomRealtime({
       });
 
     return () => {
+      console.log("unsubscribe executed", {
+        roomId: room.id,
+        viewerId
+      });
       void supabase.removeChannel(channel);
     };
   }, [
+    appendMissingMessageById,
     isRealtimeReady,
     logTimingFromClick,
+    queueDeferredReadUpdate,
     queueMessageStatusPatch,
     refreshReactions,
     room.id,
     syncChatPreviewCache,
     supabase,
-    updateViewerLastSeen,
     viewerId
   ]);
 
