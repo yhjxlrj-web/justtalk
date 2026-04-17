@@ -5,6 +5,12 @@ import { flushSync } from "react-dom";
 import { useCurrentLocale, useDictionary } from "@/components/providers/dictionary-provider";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/button";
 import { compressImageForChat } from "@/lib/images/compress-chat-image";
+import {
+  getImageFileExtension,
+  isHeicLikeFile,
+  isSupportedImageInput
+} from "@/lib/images/image-file-support";
+import { normalizeSelectedImage } from "@/lib/images/normalize-selected-image";
 import { initialSendMessageFormState } from "@/lib/messages/action-state";
 import { sendImageMessageAction, sendMessageAction } from "@/lib/messages/actions";
 import {
@@ -28,6 +34,52 @@ const IMAGE_TOO_LARGE_ERROR = {
   es: "La imagen es demasiado grande. Elige una foto mas pequena.",
   ko: "이미지가 너무 커서 업로드할 수 없어요. 더 작은 사진을 선택해 주세요."
 } as const;
+
+const UNSUPPORTED_IMAGE_FORMAT_ERROR = {
+  en: "Unsupported image format. Please use JPG, PNG, WEBP, or HEIC/HEIF.",
+  es: "Formato de imagen no compatible. Usa JPG, PNG, WEBP o HEIC/HEIF.",
+  ko: "지원되지 않는 이미지 형식입니다. JPG, PNG, WEBP, HEIC/HEIF 파일을 사용해 주세요."
+} as const;
+
+const IMAGE_CONVERSION_FAILED_ERROR = {
+  en: "We couldn't convert this HEIC image. Please choose a different image.",
+  es: "No pudimos convertir esta imagen HEIC. Elige otra imagen.",
+  ko: "HEIC 이미지를 변환하지 못했습니다. 다른 이미지를 선택해 주세요."
+} as const;
+
+const IMAGE_PREVIEW_FAILED_ERROR = {
+  en: "Image preview failed. Please choose another image.",
+  es: "No se pudo mostrar la vista previa. Elige otra imagen.",
+  ko: "이미지 미리보기에 실패했습니다. 다른 이미지를 선택해 주세요."
+} as const;
+
+const IMAGE_UPLOAD_FAILED_ERROR = {
+  en: "Image upload failed. Please try again.",
+  es: "Error al subir la imagen. Intentalo de nuevo.",
+  ko: "이미지 업로드 중 오류가 발생했습니다. 다시 시도해 주세요."
+} as const;
+
+function resolveLocaleCode(locale: string): "en" | "es" | "ko" {
+  const normalizedLocale = locale.toLowerCase();
+
+  if (normalizedLocale.startsWith("ko")) {
+    return "ko";
+  }
+
+  if (normalizedLocale.startsWith("es")) {
+    return "es";
+  }
+
+  return "en";
+}
+
+function logChatImageDebug(phase: string, payload: Record<string, unknown>) {
+  if (process.env.NODE_ENV === "production") {
+    return;
+  }
+
+  console.log(`[chat-image] ${phase}`, payload);
+}
 
 export const ChatComposer = memo(function ChatComposer({
   chatId,
@@ -72,6 +124,7 @@ export const ChatComposer = memo(function ChatComposer({
 }) {
   const dictionary = useDictionary();
   const locale = useCurrentLocale();
+  const localeCode = resolveLocaleCode(locale);
   const [message, setMessage] = useState("");
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const [selectedImages, setSelectedImages] = useState<SelectedImageItem[]>([]);
@@ -148,31 +201,86 @@ export const ChatComposer = memo(function ChatComposer({
     });
   };
 
-  const handleSelectedFiles = (fileList: FileList | null) => {
+  const handleSelectedFiles = async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) {
       return;
     }
 
-    const nextItems = Array.from(fileList)
-      .filter((file) => file.type.startsWith("image/"))
-      .map((file) => {
-        const previewUrl = URL.createObjectURL(file);
-        activePreviewUrlsRef.current.add(previewUrl);
+    const selectedFiles = Array.from(fileList);
+    const nextItems: SelectedImageItem[] = [];
+    let hadUnsupportedFile = false;
+    let hadConversionFailure = false;
 
-        return {
-          file,
-          fileName: file.name,
-          previewUrl,
-          size: file.size,
-          type: file.type
-        } satisfies SelectedImageItem;
+    for (const selectedFile of selectedFiles) {
+      const extension = getImageFileExtension(selectedFile.name);
+      const supported = isSupportedImageInput(selectedFile);
+
+      logChatImageDebug("file-selected", {
+        extension,
+        isHeicLikeFile: isHeicLikeFile(selectedFile),
+        name: selectedFile.name,
+        size: selectedFile.size,
+        supported,
+        type: selectedFile.type || "(empty)"
       });
 
+      if (!supported) {
+        hadUnsupportedFile = true;
+        continue;
+      }
+
+      try {
+        const normalizedFile = await normalizeSelectedImage(selectedFile, {
+          jpegQuality: 0.84,
+          logScope: "chat"
+        });
+        const previewUrl = URL.createObjectURL(normalizedFile);
+        activePreviewUrlsRef.current.add(previewUrl);
+
+        nextItems.push({
+          file: normalizedFile,
+          fileName: normalizedFile.name || selectedFile.name,
+          previewUrl,
+          size: normalizedFile.size,
+          type: normalizedFile.type || "image/jpeg"
+        });
+
+        logChatImageDebug("file-normalized", {
+          name: normalizedFile.name,
+          originalName: selectedFile.name,
+          originalSize: selectedFile.size,
+          originalType: selectedFile.type || "(empty)",
+          size: normalizedFile.size,
+          type: normalizedFile.type || "(empty)"
+        });
+      } catch (error) {
+        hadConversionFailure = true;
+        logChatImageDebug("normalize-failed", {
+          error,
+          name: selectedFile.name,
+          size: selectedFile.size,
+          type: selectedFile.type || "(empty)"
+        });
+      }
+    }
+
     if (nextItems.length === 0) {
+      if (hadConversionFailure) {
+        setSubmitError(IMAGE_CONVERSION_FAILED_ERROR[localeCode]);
+      } else if (hadUnsupportedFile) {
+        setSubmitError(UNSUPPORTED_IMAGE_FORMAT_ERROR[localeCode]);
+      }
       return;
     }
 
-    setSubmitError(null);
+    if (hadConversionFailure) {
+      setSubmitError(IMAGE_CONVERSION_FAILED_ERROR[localeCode]);
+    } else if (hadUnsupportedFile) {
+      setSubmitError(UNSUPPORTED_IMAGE_FORMAT_ERROR[localeCode]);
+    } else {
+      setSubmitError(null);
+    }
+
     setSelectedImages((current) => [...current, ...nextItems]);
   };
 
@@ -223,7 +331,7 @@ export const ChatComposer = memo(function ChatComposer({
             const compressionResult = await compressImageForChat(image.file);
             uploadFile = compressionResult.compressedFile;
 
-            console.log("chat image compression", {
+            logChatImageDebug("compression-success", {
               fileName: image.fileName,
               originalSize: compressionResult.originalSize,
               compressedSize: compressionResult.compressedSize,
@@ -239,18 +347,18 @@ export const ChatComposer = memo(function ChatComposer({
             });
           } catch (error) {
             if (image.file.size > MAX_ORIGINAL_IMAGE_UPLOAD_BYTES) {
-              console.error("chat image compression failed and fallback blocked", {
+              logChatImageDebug("compression-failed-too-large", {
                 fileName: image.fileName,
                 originalSize: image.file.size,
                 limit: MAX_ORIGINAL_IMAGE_UPLOAD_BYTES,
                 error
               });
-              setSubmitError(IMAGE_TOO_LARGE_ERROR[locale]);
+              setSubmitError(IMAGE_TOO_LARGE_ERROR[localeCode]);
               onSendFailed(optimisticMessage.id);
               return;
             }
 
-            console.warn("chat image compression fallback to original", {
+            logChatImageDebug("compression-fallback-original", {
               fileName: image.fileName,
               originalSize: image.file.size,
               error
@@ -266,7 +374,13 @@ export const ChatComposer = memo(function ChatComposer({
           const result = await sendImageMessageAction(formData);
 
           if (result.error || !result.message) {
-            setSubmitError(result.error ?? "We couldn't send your image. Please try again.");
+            setSubmitError(result.error ?? IMAGE_UPLOAD_FAILED_ERROR[localeCode]);
+            logChatImageDebug("upload-failed", {
+              error: result.error ?? null,
+              fileName: uploadFile.name,
+              size: uploadFile.size,
+              type: uploadFile.type || "(empty)"
+            });
             onSendFailed(optimisticMessage.id);
             return;
           }
@@ -406,11 +520,11 @@ export const ChatComposer = memo(function ChatComposer({
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*"
+        accept="image/*,.heic,.heif,.jpg,.jpeg,.png,.webp"
         multiple
         className="hidden"
         onChange={(event) => {
-          handleSelectedFiles(event.target.files);
+          void handleSelectedFiles(event.target.files);
         }}
       />
 
@@ -459,6 +573,14 @@ export const ChatComposer = memo(function ChatComposer({
                   src={image.previewUrl}
                   alt={image.fileName}
                   className="h-full w-full object-cover"
+                  onError={() => {
+                    logChatImageDebug("preview-error", {
+                      fileName: image.fileName,
+                      size: image.size,
+                      type: image.type || "(empty)"
+                    });
+                    setSubmitError(IMAGE_PREVIEW_FAILED_ERROR[localeCode]);
+                  }}
                 />
               </div>
             ))}

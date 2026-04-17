@@ -2,6 +2,13 @@
 
 import type { SendMessageFormState } from "@/lib/messages/action-state";
 import { getDictionary } from "@/lib/i18n/get-dictionary";
+import {
+  isHeicLikeFile,
+  isUploadableImageFile,
+  resolveUploadImageExtension,
+  resolveUploadImageMimeType,
+  withNormalizedImageExtension
+} from "@/lib/images/image-file-support";
 import { isChatMessageTooLong, normalizeChatMessageText } from "@/lib/messages/constants";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseActionClient } from "@/lib/supabase/server";
@@ -12,6 +19,30 @@ const IMAGE_TOO_LARGE_ERROR = {
   en: "Image is too large to upload. Please choose a smaller photo.",
   es: "La imagen es demasiado grande. Elige una foto mas pequena.",
   ko: "이미지가 너무 커서 업로드할 수 없어요. 더 작은 사진을 선택해 주세요."
+} as const;
+
+const IMAGE_TOO_LARGE_ERROR_LOCALIZED = {
+  en: "Image is too large to upload. Please choose a smaller photo.",
+  es: "La imagen es demasiado grande. Elige una foto mas pequena.",
+  ko: "이미지가 너무 커서 업로드할 수 없어요. 더 작은 사진을 선택해 주세요."
+} as const;
+
+const UNSUPPORTED_IMAGE_FORMAT_ERROR = {
+  en: "Unsupported image format. Please upload JPG, PNG, or WEBP.",
+  es: "Formato de imagen no compatible. Sube JPG, PNG o WEBP.",
+  ko: "지원되지 않는 이미지 형식입니다. JPG, PNG, WEBP 파일만 업로드할 수 있어요."
+} as const;
+
+const IMAGE_CONVERSION_REQUIRED_ERROR = {
+  en: "HEIC images must be converted before upload. Please try selecting the image again.",
+  es: "Las imagenes HEIC deben convertirse antes de subir. Vuelve a seleccionar la imagen.",
+  ko: "HEIC 이미지는 업로드 전에 변환이 필요합니다. 이미지를 다시 선택해 주세요."
+} as const;
+
+const IMAGE_UPLOAD_FAILED_ERROR = {
+  en: "Image upload failed. Please try again.",
+  es: "Error al subir la imagen. Intentalo de nuevo.",
+  ko: "이미지 업로드 중 오류가 발생했습니다. 다시 시도해 주세요."
 } as const;
 
 function sanitizeFileName(fileName: string) {
@@ -100,7 +131,6 @@ export async function sendImageMessageAction(formData: FormData): Promise<SendMe
   const clientMessageId = String(formData.get("clientMessageId") ?? "").trim();
   const locale = String(formData.get("locale") ?? "").trim();
   const normalizedLocale = locale.toLowerCase();
-  const dictionary = getDictionary(locale);
   const localeCode =
     normalizedLocale.startsWith("ko") ? "ko" : normalizedLocale.startsWith("es") ? "es" : "en";
   const fileValue = formData.get("image");
@@ -114,12 +144,25 @@ export async function sendImageMessageAction(formData: FormData): Promise<SendMe
     return { error: "Please choose an image before sending." };
   }
 
-  if (!imageFile.type.startsWith("image/")) {
-    return { error: "Only image files can be sent here." };
+  if (isHeicLikeFile(imageFile)) {
+    return { error: IMAGE_CONVERSION_REQUIRED_ERROR[localeCode] };
+  }
+
+  if (!isUploadableImageFile(imageFile)) {
+    return { error: UNSUPPORTED_IMAGE_FORMAT_ERROR[localeCode] };
   }
 
   if (imageFile.size > MAX_CHAT_IMAGE_UPLOAD_BYTES) {
-    return { error: IMAGE_TOO_LARGE_ERROR[localeCode] };
+    return {
+      error: IMAGE_TOO_LARGE_ERROR_LOCALIZED[localeCode] ?? IMAGE_TOO_LARGE_ERROR[localeCode]
+    };
+  }
+
+  const normalizedExtension = resolveUploadImageExtension(imageFile);
+  const normalizedMimeType = resolveUploadImageMimeType(imageFile);
+
+  if (!normalizedExtension || !normalizedMimeType) {
+    return { error: UNSUPPORTED_IMAGE_FORMAT_ERROR[localeCode] };
   }
 
   const client = await createSupabaseActionClient();
@@ -131,9 +174,12 @@ export async function sendImageMessageAction(formData: FormData): Promise<SendMe
   }
 
   const admin = createSupabaseAdminClient();
-  const fileExt = imageFile.name.split(".").pop() ?? "jpg";
+  const normalizedFileName = withNormalizedImageExtension(
+    imageFile.name || `image.${normalizedExtension}`,
+    normalizedExtension
+  );
   const storagePath = `${chatId}/${user.id}/${Date.now()}-${sanitizeFileName(
-    imageFile.name || `image.${fileExt}`
+    normalizedFileName
   )}`;
 
   try {
@@ -141,13 +187,21 @@ export async function sendImageMessageAction(formData: FormData): Promise<SendMe
     const { error: uploadError } = await admin.storage
       .from("chat-attachments")
       .upload(storagePath, arrayBuffer, {
-        contentType: imageFile.type,
+        contentType: normalizedMimeType,
         upsert: false
       });
 
     if (uploadError) {
+      console.error("sendImageMessageAction upload failed", {
+        chatId,
+        contentType: normalizedMimeType,
+        fileName: normalizedFileName,
+        senderId: user.id,
+        storagePath,
+        uploadError
+      });
       return {
-        error: uploadError.message ?? dictionary.failedToSend
+        error: IMAGE_UPLOAD_FAILED_ERROR[localeCode]
       };
     }
 
@@ -160,12 +214,12 @@ export async function sendImageMessageAction(formData: FormData): Promise<SendMe
       chatId,
       clientMessageId: clientMessageId || undefined,
       senderId: user.id,
-      originalText: imageFile.name || "Photo",
+      originalText: normalizedFileName || "Photo",
       originalLanguage: "",
       messageKind: "image",
       attachmentUrl: publicUrl,
-      attachmentName: imageFile.name || "Photo",
-      attachmentContentType: imageFile.type
+      attachmentName: normalizedFileName || "Photo",
+      attachmentContentType: normalizedMimeType
     });
 
     return {
@@ -173,11 +227,15 @@ export async function sendImageMessageAction(formData: FormData): Promise<SendMe
       message
     };
   } catch (error) {
+    console.error("sendImageMessageAction failed", {
+      chatId,
+      error,
+      fileName: normalizedFileName,
+      mimeType: normalizedMimeType,
+      senderId: user.id
+    });
     return {
-      error:
-        error instanceof Error
-          ? error.message
-          : dictionary.failedToSend
+      error: IMAGE_UPLOAD_FAILED_ERROR[localeCode]
     };
   }
 }

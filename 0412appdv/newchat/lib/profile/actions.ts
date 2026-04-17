@@ -6,6 +6,13 @@ import { getAuthMessages } from "@/lib/i18n/auth-messages";
 import { resolveAuthLocale } from "@/lib/i18n/auth-locale";
 import { setServerAuthLocale } from "@/lib/i18n/auth-locale-server";
 import { resolveLocale } from "@/lib/i18n/get-dictionary";
+import {
+  isHeicLikeFile,
+  isUploadableImageFile,
+  resolveUploadImageExtension,
+  resolveUploadImageMimeType,
+  withNormalizedImageExtension
+} from "@/lib/images/image-file-support";
 import { syncPeerSnapshotAcrossChatSummaries } from "@/lib/chats/room-summary";
 import type { ProfileSetupFormState } from "@/lib/profile/action-state";
 import { getUserProfile, mapProfileRowToUserProfile } from "@/lib/profile/profile";
@@ -13,6 +20,36 @@ import { createSupabaseActionClient } from "@/lib/supabase/server";
 
 function sanitizeFileName(fileName: string) {
   return fileName.replace(/[^a-zA-Z0-9.-]/g, "-").toLowerCase();
+}
+
+const PROFILE_PHOTO_UNSUPPORTED_ERROR = {
+  en: "Unsupported image format. Please upload JPG, PNG, or WEBP.",
+  es: "Formato de imagen no compatible. Sube JPG, PNG o WEBP.",
+  ko: "지원되지 않는 이미지 형식입니다. JPG, PNG, WEBP 파일만 업로드할 수 있어요."
+} as const;
+
+const PROFILE_PHOTO_CONVERSION_REQUIRED_ERROR = {
+  en: "HEIC images must be converted before upload. Please re-select the image.",
+  es: "Las imagenes HEIC deben convertirse antes de subir. Vuelve a seleccionar la imagen.",
+  ko: "HEIC 이미지는 업로드 전에 변환이 필요합니다. 이미지를 다시 선택해 주세요."
+} as const;
+
+const PROFILE_PHOTO_UPLOAD_FAILED_ERROR = {
+  en: "Image upload failed. Please try again.",
+  es: "Error al subir la imagen. Intentalo de nuevo.",
+  ko: "이미지 업로드 중 오류가 발생했습니다. 다시 시도해 주세요."
+} as const;
+
+function resolveLocaleCode(locale: string): "en" | "es" | "ko" {
+  const resolvedLocale = resolveAuthLocale(locale);
+
+  if (resolvedLocale.startsWith("ko")) {
+    return "ko";
+  }
+  if (resolvedLocale.startsWith("es")) {
+    return "es";
+  }
+  return "en";
 }
 
 function validateProfileForm(
@@ -24,6 +61,7 @@ function validateProfileForm(
   locale: string
 ) {
   const auth = getAuthMessages(resolveAuthLocale(locale));
+  const localeCode = resolveLocaleCode(locale);
   const errors: ProfileSetupFormState["errors"] = {};
 
   if (!name.trim()) {
@@ -50,8 +88,12 @@ function validateProfileForm(
     errors.photo = auth.setupPhotoTooLarge;
   }
 
-  if (photo && photo.size > 0 && !photo.type.startsWith("image/")) {
-    errors.photo = auth.setupPhotoInvalid;
+  if (photo && photo.size > 0) {
+    if (isHeicLikeFile(photo)) {
+      errors.photo = PROFILE_PHOTO_CONVERSION_REQUIRED_ERROR[localeCode];
+    } else if (!isUploadableImageFile(photo)) {
+      errors.photo = PROFILE_PHOTO_UNSUPPORTED_ERROR[localeCode] || auth.setupPhotoInvalid;
+    }
   }
 
   return errors;
@@ -69,24 +111,62 @@ async function persistProfile(params: {
 }) {
   const { country, language, locale, name, statusMessage, photo, supabase, user } = params;
   const auth = getAuthMessages(resolveAuthLocale(locale));
+  const localeCode = resolveLocaleCode(locale);
   const existingProfile = await getUserProfile(supabase, user.id);
   let avatarUrl: string | null = existingProfile?.avatarUrl ?? null;
 
   if (photo) {
-    const fileExt = photo.name.split(".").pop() ?? "jpg";
-    const storagePath = `${user.id}/avatar-${Date.now()}-${sanitizeFileName(photo.name || `image.${fileExt}`)}`;
+    if (isHeicLikeFile(photo)) {
+      return {
+        error: {
+          photo: PROFILE_PHOTO_CONVERSION_REQUIRED_ERROR[localeCode]
+        }
+      };
+    }
+
+    if (!isUploadableImageFile(photo)) {
+      return {
+        error: {
+          photo: PROFILE_PHOTO_UNSUPPORTED_ERROR[localeCode]
+        }
+      };
+    }
+
+    const normalizedExtension = resolveUploadImageExtension(photo);
+    const normalizedMimeType = resolveUploadImageMimeType(photo);
+
+    if (!normalizedExtension || !normalizedMimeType) {
+      return {
+        error: {
+          photo: PROFILE_PHOTO_UNSUPPORTED_ERROR[localeCode]
+        }
+      };
+    }
+
+    const normalizedFileName = withNormalizedImageExtension(
+      photo.name || `image.${normalizedExtension}`,
+      normalizedExtension
+    );
+    const storagePath = `${user.id}/avatar-${Date.now()}-${sanitizeFileName(normalizedFileName)}`;
     const arrayBuffer = await photo.arrayBuffer();
     const { error: uploadError } = await supabase.storage
       .from("avatars")
       .upload(storagePath, arrayBuffer, {
-        contentType: photo.type,
+        contentType: normalizedMimeType,
         upsert: true
       });
 
     if (uploadError) {
+      console.error("profile avatar upload failed", {
+        contentType: normalizedMimeType,
+        fileName: normalizedFileName,
+        storagePath,
+        uploadError,
+        userId: user.id
+      });
       return {
         error: {
-          photo: uploadError.message ?? auth.setupPhotoInvalid
+          photo: PROFILE_PHOTO_UPLOAD_FAILED_ERROR[localeCode] ?? auth.setupPhotoInvalid
         }
       };
     }

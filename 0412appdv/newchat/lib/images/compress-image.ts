@@ -1,5 +1,7 @@
 "use client";
 
+import { isHeicLikeFile } from "@/lib/images/image-file-support";
+
 type CompressionOptions = {
   jpegQuality?: number;
   maxDimension?: number;
@@ -94,6 +96,10 @@ export async function compressImageFile(
   file: File,
   options: CompressionOptions = {}
 ): Promise<CompressedImageResult> {
+  if (isHeicLikeFile(file)) {
+    throw new Error("HEIC/HEIF images must be converted before compression.");
+  }
+
   const maxDimension = options.maxDimension ?? DEFAULT_MAX_DIMENSION;
   const jpegQuality = options.jpegQuality ?? DEFAULT_JPEG_QUALITY;
   const webpQuality = options.webpQuality ?? DEFAULT_WEBP_QUALITY;

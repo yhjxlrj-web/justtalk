@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { useCurrentLocale, useDictionary } from "@/components/providers/dictionary-provider";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/button";
 import { compressImageFile } from "@/lib/images/compress-image";
+import { isSupportedImageInput } from "@/lib/images/image-file-support";
+import { normalizeSelectedImage } from "@/lib/images/normalize-selected-image";
 import { Input } from "@/components/ui/input";
 import { initialEditProfileFormState } from "@/lib/profile/action-state";
 import { editProfileAction } from "@/lib/profile/actions";
@@ -32,6 +34,46 @@ const PHOTO_TOO_LARGE_MESSAGE = {
   ko: "5MB 이하 이미지를 선택해 주세요."
 } as const;
 
+const PROFILE_UNSUPPORTED_IMAGE_ERROR = {
+  en: "Unsupported image format. Please use JPG, PNG, WEBP, or HEIC/HEIF.",
+  es: "Formato de imagen no compatible. Usa JPG, PNG, WEBP o HEIC/HEIF.",
+  ko: "지원되지 않는 이미지 형식입니다. JPG, PNG, WEBP, HEIC/HEIF 파일을 사용해 주세요."
+} as const;
+
+const PROFILE_IMAGE_CONVERSION_FAILED_ERROR = {
+  en: "We couldn't convert this HEIC image. Please choose a different image.",
+  es: "No pudimos convertir esta imagen HEIC. Elige otra imagen.",
+  ko: "HEIC 이미지를 변환하지 못했습니다. 다른 이미지를 선택해 주세요."
+} as const;
+
+const PROFILE_PREVIEW_FAILED_ERROR = {
+  en: "Image preview failed. Please choose another image.",
+  es: "No se pudo mostrar la vista previa. Elige otra imagen.",
+  ko: "이미지 미리보기에 실패했습니다. 다른 이미지를 선택해 주세요."
+} as const;
+
+function resolveLocaleCode(locale: string): "en" | "es" | "ko" {
+  const normalizedLocale = locale.toLowerCase();
+
+  if (normalizedLocale.startsWith("ko")) {
+    return "ko";
+  }
+
+  if (normalizedLocale.startsWith("es")) {
+    return "es";
+  }
+
+  return "en";
+}
+
+function logProfileImageDebug(phase: string, payload: Record<string, unknown>) {
+  if (process.env.NODE_ENV === "production") {
+    return;
+  }
+
+  console.log(`[profile-image] ${phase}`, payload);
+}
+
 export function EditProfileModal({
   isOpen,
   onClose,
@@ -55,6 +97,7 @@ export function EditProfileModal({
   const errors = state?.errors ?? {};
   const dictionary = useDictionary();
   const locale = useCurrentLocale();
+  const localeCode = resolveLocaleCode(locale);
   const copy = getUiCopy(locale);
   const router = useRouter();
   const photoInputRef = useRef<HTMLInputElement | null>(null);
@@ -173,17 +216,79 @@ export function EditProfileModal({
       return;
     }
 
+    logProfileImageDebug("file-selected", {
+      name: file.name,
+      size: file.size,
+      type: file.type || "(empty)"
+    });
+
+    if (!isSupportedImageInput(file)) {
+      event.target.value = "";
+      setLocalPhotoError(PROFILE_UNSUPPORTED_IMAGE_ERROR[localeCode]);
+      logProfileImageDebug("unsupported-format", {
+        name: file.name,
+        size: file.size,
+        type: file.type || "(empty)"
+      });
+      return;
+    }
+
     setLocalPhotoError(null);
     setIsPhotoCompressing(true);
 
+    let normalizedFile: File;
+
     try {
-      const compressed = await compressImageFile(file, {
-        jpegQuality: 0.82,
-        maxDimension: 1440,
-        minBypassBytes: 240 * 1024,
-        webpQuality: 0.8
+      normalizedFile = await normalizeSelectedImage(file, {
+        jpegQuality: 0.85,
+        logScope: "profile"
       });
-      const fileForSubmit = compressed.compressedFile;
+    } catch (error) {
+      event.target.value = "";
+      setLocalPhotoError(PROFILE_IMAGE_CONVERSION_FAILED_ERROR[localeCode]);
+      logProfileImageDebug("normalize-failed", {
+        error,
+        name: file.name,
+        size: file.size,
+        type: file.type || "(empty)"
+      });
+      setIsPhotoCompressing(false);
+      setIsPhotoMenuOpen(false);
+      return;
+    }
+
+    try {
+      let fileForSubmit = normalizedFile;
+
+      try {
+        const compressed = await compressImageFile(normalizedFile, {
+          jpegQuality: 0.84,
+          maxDimension: 1024,
+          minBypassBytes: 220 * 1024,
+          webpQuality: 0.8
+        });
+        fileForSubmit = compressed.compressedFile;
+
+        logProfileImageDebug("compression-success", {
+          compressedSize: compressed.compressedSize,
+          fileName: normalizedFile.name,
+          originalSize: compressed.originalSize,
+          wasCompressed: compressed.wasCompressed
+        });
+      } catch (error) {
+        logProfileImageDebug("compression-fallback-normalized", {
+          error,
+          fileName: normalizedFile.name,
+          normalizedSize: normalizedFile.size
+        });
+      }
+
+      if (fileForSubmit.size > 5 * 1024 * 1024) {
+        event.target.value = "";
+        setLocalPhotoError(PHOTO_TOO_LARGE_MESSAGE[localeCode]);
+        return;
+      }
+
       const dataTransfer = new DataTransfer();
       dataTransfer.items.add(fileForSubmit);
       const mutableInput = event.target as HTMLInputElement & { files: FileList | null };
@@ -197,37 +302,19 @@ export function EditProfileModal({
 
         return nextPreviewUrl;
       });
-
-      console.log("profile edit image compression", {
-        compressedSize: compressed.compressedSize,
-        fileName: file.name,
-        originalSize: compressed.originalSize,
-        wasCompressed: compressed.wasCompressed
-      });
     } catch (error) {
-      if (file.size > 5 * 1024 * 1024) {
-        event.target.value = "";
-        setLocalPhotoError(PHOTO_TOO_LARGE_MESSAGE[locale]);
-      } else {
-        const nextPreviewUrl = URL.createObjectURL(file);
-        setSelectedPhotoPreviewUrl((previousPreviewUrl) => {
-          if (previousPreviewUrl) {
-            URL.revokeObjectURL(previousPreviewUrl);
-          }
-
-          return nextPreviewUrl;
-        });
-        console.warn("profile edit image compression fallback to original", {
-          error,
-          fileName: file.name,
-          originalSize: file.size
-        });
-      }
+      event.target.value = "";
+      setLocalPhotoError(PROFILE_IMAGE_CONVERSION_FAILED_ERROR[localeCode]);
+      logProfileImageDebug("selection-processing-failed", {
+        error,
+        name: file.name,
+        size: file.size,
+        type: file.type || "(empty)"
+      });
     } finally {
       setIsPhotoCompressing(false);
       setIsPhotoMenuOpen(false);
     }
-
   };
 
   return (
@@ -284,6 +371,13 @@ export function EditProfileModal({
                         src={currentAvatarUrl}
                         alt="Profile avatar"
                         className="h-full w-full object-cover"
+                        onError={() => {
+                          setLocalPhotoError(PROFILE_PREVIEW_FAILED_ERROR[localeCode]);
+                          logProfileImageDebug("preview-error", {
+                            context: "profile-avatar",
+                            src: currentAvatarUrl
+                          });
+                        }}
                       />
                     ) : (
                       avatarInitial
@@ -344,7 +438,7 @@ export function EditProfileModal({
                   id="profilePhoto"
                   name="profilePhoto"
                   type="file"
-                  accept="image/*"
+                  accept="image/*,.heic,.heif,.jpg,.jpeg,.png,.webp"
                   className="hidden"
                   onChange={handlePhotoSelection}
                 />
@@ -469,6 +563,13 @@ export function EditProfileModal({
               src={currentAvatarUrl}
               alt="Profile avatar preview"
               className="max-h-[72dvh] w-auto max-w-full rounded-[26px] object-contain shadow-[0_24px_80px_rgba(15,23,42,0.28)]"
+              onError={() => {
+                setLocalPhotoError(PROFILE_PREVIEW_FAILED_ERROR[localeCode]);
+                logProfileImageDebug("preview-error", {
+                  context: "avatar-viewer",
+                  src: currentAvatarUrl
+                });
+              }}
             />
           </div>
         </div>

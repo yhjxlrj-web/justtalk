@@ -4,6 +4,8 @@ import { type ChangeEvent, useActionState, useRef, useState } from "react";
 import { useCurrentLocale } from "@/components/providers/dictionary-provider";
 import { getAuthMessages } from "@/lib/i18n/auth-messages";
 import { compressImageFile } from "@/lib/images/compress-image";
+import { isSupportedImageInput } from "@/lib/images/image-file-support";
+import { normalizeSelectedImage } from "@/lib/images/normalize-selected-image";
 import { resolveLocale } from "@/lib/i18n/get-dictionary";
 import { initialProfileSetupFormState } from "@/lib/profile/action-state";
 import { saveProfileSetupAction } from "@/lib/profile/actions";
@@ -13,8 +15,29 @@ import { PrimaryButton } from "@/components/ui/button";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Input } from "@/components/ui/input";
 
+const PROFILE_UNSUPPORTED_IMAGE_ERROR = {
+  en: "Unsupported image format. Please use JPG, PNG, WEBP, or HEIC/HEIF.",
+  es: "Formato de imagen no compatible. Usa JPG, PNG, WEBP o HEIC/HEIF.",
+  ko: "지원되지 않는 이미지 형식입니다. JPG, PNG, WEBP, HEIC/HEIF 파일을 사용해 주세요."
+} as const;
+
+const PROFILE_IMAGE_CONVERSION_FAILED_ERROR = {
+  en: "We couldn't convert this HEIC image. Please choose a different image.",
+  es: "No pudimos convertir esta imagen HEIC. Elige otra imagen.",
+  ko: "HEIC 이미지를 변환하지 못했습니다. 다른 이미지를 선택해 주세요."
+} as const;
+
+function logProfileSetupImageDebug(phase: string, payload: Record<string, unknown>) {
+  if (process.env.NODE_ENV === "production") {
+    return;
+  }
+
+  console.log(`[profile-setup-image] ${phase}`, payload);
+}
+
 export function ProfileSetupForm({ profile }: { profile: UserProfile | null }) {
   const locale = useCurrentLocale();
+  const localeCode = locale.startsWith("ko") ? "ko" : locale.startsWith("es") ? "es" : "en";
   const auth = getAuthMessages(locale);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const [photoCompressionError, setPhotoCompressionError] = useState<string | null>(null);
@@ -33,38 +56,90 @@ export function ProfileSetupForm({ profile }: { profile: UserProfile | null }) {
       return;
     }
 
+    logProfileSetupImageDebug("file-selected", {
+      name: selectedFile.name,
+      size: selectedFile.size,
+      type: selectedFile.type || "(empty)"
+    });
+
+    if (!isSupportedImageInput(selectedFile)) {
+      input.value = "";
+      setPhotoCompressionError(PROFILE_UNSUPPORTED_IMAGE_ERROR[localeCode]);
+      logProfileSetupImageDebug("unsupported-format", {
+        name: selectedFile.name,
+        size: selectedFile.size,
+        type: selectedFile.type || "(empty)"
+      });
+      return;
+    }
+
     setPhotoCompressionError(null);
     setIsCompressingPhoto(true);
 
+    let normalizedFile: File;
+
     try {
-      const compressed = await compressImageFile(selectedFile, {
-        jpegQuality: 0.82,
-        maxDimension: 1440,
-        minBypassBytes: 240 * 1024,
-        webpQuality: 0.8
+      normalizedFile = await normalizeSelectedImage(selectedFile, {
+        jpegQuality: 0.85,
+        logScope: "profile"
       });
-      const fileForSubmit = compressed.compressedFile;
+    } catch (error) {
+      input.value = "";
+      setPhotoCompressionError(PROFILE_IMAGE_CONVERSION_FAILED_ERROR[localeCode]);
+      logProfileSetupImageDebug("normalize-failed", {
+        error,
+        name: selectedFile.name,
+        size: selectedFile.size,
+        type: selectedFile.type || "(empty)"
+      });
+      setIsCompressingPhoto(false);
+      return;
+    }
+
+    try {
+      let fileForSubmit = normalizedFile;
+
+      try {
+        const compressed = await compressImageFile(normalizedFile, {
+          jpegQuality: 0.84,
+          maxDimension: 1024,
+          minBypassBytes: 220 * 1024,
+          webpQuality: 0.8
+        });
+        fileForSubmit = compressed.compressedFile;
+        logProfileSetupImageDebug("compression-success", {
+          compressedSize: compressed.compressedSize,
+          fileName: normalizedFile.name,
+          originalSize: compressed.originalSize,
+          wasCompressed: compressed.wasCompressed
+        });
+      } catch (error) {
+        logProfileSetupImageDebug("compression-fallback-normalized", {
+          error,
+          fileName: normalizedFile.name,
+          normalizedSize: normalizedFile.size
+        });
+      }
+
+      if (fileForSubmit.size > 5 * 1024 * 1024) {
+        input.value = "";
+        setPhotoCompressionError(auth.setupPhotoTooLarge);
+        return;
+      }
+
       const dataTransfer = new DataTransfer();
       dataTransfer.items.add(fileForSubmit);
       const mutableInput = input as HTMLInputElement & { files: FileList | null };
       mutableInput.files = dataTransfer.files;
-      console.log("profile setup image compression", {
-        compressedSize: compressed.compressedSize,
-        fileName: selectedFile.name,
-        originalSize: compressed.originalSize,
-        wasCompressed: compressed.wasCompressed
-      });
     } catch (error) {
-      if (selectedFile.size > 5 * 1024 * 1024) {
-        input.value = "";
-        setPhotoCompressionError(auth.setupPhotoTooLarge);
-      } else {
-        console.warn("profile setup image compression fallback to original", {
-          error,
-          fileName: selectedFile.name,
-          originalSize: selectedFile.size
-        });
-      }
+      input.value = "";
+      setPhotoCompressionError(PROFILE_IMAGE_CONVERSION_FAILED_ERROR[localeCode]);
+      logProfileSetupImageDebug("selection-processing-failed", {
+        error,
+        fileName: selectedFile.name,
+        originalSize: selectedFile.size,
+        originalType: selectedFile.type || "(empty)"
+      });
     } finally {
       setIsCompressingPhoto(false);
     }
@@ -152,7 +227,7 @@ export function ProfileSetupForm({ profile }: { profile: UserProfile | null }) {
                 id="profilePhoto"
                 name="profilePhoto"
                 type="file"
-                accept="image/*"
+                accept="image/*,.heic,.heif,.jpg,.jpeg,.png,.webp"
                 onChange={handleProfilePhotoChange}
                 className="block w-full text-sm text-slate-500 file:mr-4 file:rounded-full file:border-0 file:bg-brand-500 file:px-4 file:py-2 file:font-medium file:text-white hover:file:bg-brand-600"
               />
