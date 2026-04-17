@@ -38,6 +38,7 @@ export type UiCopy = {
     themeSoftDescription: string;
     themeDarkDescription: string;
     themeLightDescription: string;
+    themeClassicDescription: string;
     logoutDescription: string;
     deleteDescription: string;
     deleteAcknowledge: string;
@@ -143,6 +144,7 @@ export const uiCopy: Record<SupportedLocale, UiCopy> = {
       themeSoftDescription: "Clean and simple for everyday use.",
       themeDarkDescription: "Muted night contrast for calmer late-session reading.",
       themeLightDescription: "A crisp, bright theme with cool tones and clear contrast.",
+      themeClassicDescription: "A familiar messenger look with calm blue accents.",
       logoutDescription:
         "Sign out safely from this device while keeping your profile and chat history intact.",
       deleteDescription:
@@ -252,6 +254,7 @@ export const uiCopy: Record<SupportedLocale, UiCopy> = {
       themeSoftDescription: "깔끔하고 편안한 기본 테마",
       themeDarkDescription: "늦은 시간에도 편안하게 볼 수 있는 차분한 다크 테마입니다.",
       themeLightDescription: "맑고 시원한 톤으로 깔끔하게 보이는 테마입니다.",
+      themeClassicDescription: "익숙하고 편안한 기본 메신저 톤의 클래식 테마",
       logoutDescription:
         "현재 기기에서만 안전하게 로그아웃하고 프로필과 대화기록은 그대로 유지합니다.",
       deleteDescription:
@@ -361,6 +364,7 @@ export const uiCopy: Record<SupportedLocale, UiCopy> = {
       themeSoftDescription: "Tema limpio y cómodo para el uso diario",
       themeDarkDescription: "Contraste nocturno más calmado para sesiones tardías.",
       themeLightDescription: "Un tema claro y fresco con tonos fríos y una superficie nítida.",
+      themeClassicDescription: "Un estilo de mensajería clásico con azules suaves y equilibrados.",
       logoutDescription:
         "Cierra sesión de forma segura en este dispositivo sin borrar tu perfil ni tu historial.",
       deleteDescription:

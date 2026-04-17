@@ -3,9 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  prewarmChatRoom,
   preloadTopChatRooms,
   preloadUnreadChatRooms
 } from "@/components/chat/room-preloader";
+import { patchCachedRoomEntrySnapshot } from "@/components/chat/room-entry-cache";
+import { patchCachedRoomMessages } from "@/components/chat/room-message-cache";
 import {
   filterChatPreviewsByBlockedPeerIds,
   getCachedChatPreviews,
@@ -16,6 +19,7 @@ import {
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { formatChatTimestamp } from "@/lib/messages/format";
 import { ChatList } from "@/components/home/chat-list";
+import type { ChatMessage } from "@/types/chat";
 import type { ChatRoomPreview } from "@/types/home";
 
 type RealtimeMessageRow = {
@@ -25,7 +29,11 @@ type RealtimeMessageRow = {
   original_text: string;
   original_language: string;
   created_at: string;
+  client_message_id?: string | null;
   message_kind?: "text" | "image" | null;
+  attachment_url?: string | null;
+  attachment_name?: string | null;
+  attachment_content_type?: string | null;
 };
 
 type RealtimeTranslationRow = {
@@ -36,6 +44,144 @@ type RealtimeTranslationRow = {
   translated_text: string;
   created_at: string;
 };
+
+const ROOM_MESSAGE_PREWARM_LIMIT = 80;
+const PENDING_TRANSLATION_PLACEHOLDER = "Translating...";
+
+function toMessageTimestamp(value?: string) {
+  if (!value) {
+    return 0;
+  }
+
+  const timestamp = new Date(value).getTime();
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function mergeRealtimeMessageIntoCache(
+  currentMessages: ChatMessage[] | null,
+  nextMessage: ChatMessage
+) {
+  const safeCurrentMessages = currentMessages ?? [];
+  const nextMessageClientId = nextMessage.clientId ?? null;
+  const existingMessageIndex = safeCurrentMessages.findIndex(
+    (message) =>
+      message.id === nextMessage.id ||
+      (nextMessageClientId !== null && message.clientId === nextMessageClientId)
+  );
+
+  const mergedMessages =
+    existingMessageIndex >= 0
+      ? safeCurrentMessages.map((message, index) =>
+          index === existingMessageIndex
+            ? {
+                ...message,
+                ...nextMessage
+              }
+            : message
+        )
+      : [...safeCurrentMessages, nextMessage];
+
+  return mergedMessages
+    .sort((left, right) => toMessageTimestamp(left.createdAt) - toMessageTimestamp(right.createdAt))
+    .slice(-ROOM_MESSAGE_PREWARM_LIMIT);
+}
+
+function mapRealtimeMessageToCachedMessage(row: RealtimeMessageRow, viewerId: string): ChatMessage {
+  const isOutgoing = row.sender_id === viewerId;
+  const isImageMessage = row.message_kind === "image";
+  const originalText = row.original_text ?? "";
+  const incomingDisplayText = isImageMessage ? originalText : PENDING_TRANSLATION_PLACEHOLDER;
+
+  return {
+    id: row.id,
+    clientId: row.client_message_id ?? undefined,
+    chatRoomId: row.chat_id,
+    senderId: row.sender_id,
+    direction: isOutgoing ? "outgoing" : "incoming",
+    messageType: isImageMessage ? "image" : "text",
+    originalText,
+    displayText: isOutgoing ? originalText : incomingDisplayText,
+    body: isOutgoing ? originalText : incomingDisplayText,
+    originalBody: isOutgoing ? undefined : originalText,
+    senderLanguage: row.original_language,
+    targetLanguage: row.original_language,
+    language: row.original_language,
+    timestamp: formatChatTimestamp(row.created_at),
+    createdAt: row.created_at,
+    imageUrl: row.attachment_url ?? undefined,
+    attachmentName: row.attachment_name ?? undefined,
+    attachmentContentType: row.attachment_content_type ?? undefined,
+    canRetry: isOutgoing,
+    reactions: []
+  };
+}
+
+function patchRoomCachesFromRealtimeMessage(row: RealtimeMessageRow, viewerId: string) {
+  const mappedMessage = mapRealtimeMessageToCachedMessage(row, viewerId);
+
+  patchCachedRoomMessages(row.chat_id, (currentMessages) =>
+    mergeRealtimeMessageIntoCache(currentMessages, mappedMessage)
+  );
+
+  patchCachedRoomEntrySnapshot(row.chat_id, (currentSnapshot) => {
+    if (!currentSnapshot) {
+      return currentSnapshot;
+    }
+
+    return {
+      ...currentSnapshot,
+      messages: mergeRealtimeMessageIntoCache(currentSnapshot.messages, mappedMessage),
+      preloadedAt: Date.now()
+    };
+  });
+}
+
+function patchRoomCachesFromRealtimeTranslation(params: {
+  roomId: string;
+  translation: RealtimeTranslationRow;
+}) {
+  const { roomId, translation } = params;
+
+  patchCachedRoomMessages(roomId, (currentMessages) => {
+    if (!currentMessages?.length) {
+      return currentMessages;
+    }
+
+    return currentMessages.map((message) =>
+      message.id === translation.message_id && message.direction === "incoming"
+        ? {
+            ...message,
+            displayText: translation.translated_text,
+            body: translation.translated_text,
+            targetLanguage: translation.target_language,
+            language: translation.target_language
+          }
+        : message
+    );
+  });
+
+  patchCachedRoomEntrySnapshot(roomId, (currentSnapshot) => {
+    if (!currentSnapshot) {
+      return currentSnapshot;
+    }
+
+    return {
+      ...currentSnapshot,
+      messages: currentSnapshot.messages.map((message) =>
+        message.id === translation.message_id && message.direction === "incoming"
+          ? {
+              ...message,
+              displayText: translation.translated_text,
+              body: translation.translated_text,
+              targetLanguage: translation.target_language,
+              language: translation.target_language
+            }
+          : message
+      ),
+      preloadedAt: Date.now()
+    };
+  });
+}
 
 export function RealtimeChatList({
   initialChats,
@@ -206,6 +352,15 @@ export function RealtimeChatList({
           setCachedChatPreviews(nextChats);
           return nextChats;
         });
+
+        patchRoomCachesFromRealtimeMessage(row, viewerId);
+
+        void prewarmChatRoom({
+          roomId: row.chat_id,
+          router,
+          supabase,
+          viewerId
+        });
       })
       .on("postgres_changes", {
         event: "INSERT",
@@ -217,14 +372,26 @@ export function RealtimeChatList({
 
         setChats((current) =>
           {
-            const nextChats = current.map((chat) =>
-            chat.lastMessageId === row.message_id
-              ? {
-                  ...chat,
-                  latestMessagePreview: row.translated_text
-                }
-              : chat
-            );
+            let translatedRoomId: string | null = null;
+            const nextChats = current.map((chat) => {
+              if (chat.lastMessageId !== row.message_id) {
+                return chat;
+              }
+
+              translatedRoomId = chat.roomId;
+              return {
+                ...chat,
+                latestMessagePreview: row.translated_text
+              };
+            });
+
+            if (translatedRoomId) {
+              patchRoomCachesFromRealtimeTranslation({
+                roomId: translatedRoomId,
+                translation: row
+              });
+            }
+
             setCachedChatPreviews(nextChats);
             return nextChats;
           }
@@ -237,7 +404,7 @@ export function RealtimeChatList({
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [blockedPeerIdSet, selectedRoomId, supabase, viewerId]);
+  }, [blockedPeerIdSet, router, selectedRoomId, supabase, viewerId]);
 
   return <ChatList chats={chats} selectedRoomId={selectedRoomId} connectionState={isConnecting ? "connecting" : "connected"} />;
 }

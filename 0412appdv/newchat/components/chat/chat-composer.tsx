@@ -22,6 +22,13 @@ type SelectedImageItem = {
   type: string;
 };
 
+const MAX_ORIGINAL_IMAGE_UPLOAD_BYTES = 8 * 1024 * 1024;
+const IMAGE_TOO_LARGE_ERROR = {
+  en: "Image is too large to upload. Please choose a smaller photo.",
+  es: "La imagen es demasiado grande. Elige una foto mas pequena.",
+  ko: "이미지가 너무 커서 업로드할 수 없어요. 더 작은 사진을 선택해 주세요."
+} as const;
+
 export const ChatComposer = memo(function ChatComposer({
   chatId,
   disabled = false,
@@ -231,8 +238,21 @@ export const ChatComposer = memo(function ChatComposer({
               mimeType: compressionResult.mimeType
             });
           } catch (error) {
+            if (image.file.size > MAX_ORIGINAL_IMAGE_UPLOAD_BYTES) {
+              console.error("chat image compression failed and fallback blocked", {
+                fileName: image.fileName,
+                originalSize: image.file.size,
+                limit: MAX_ORIGINAL_IMAGE_UPLOAD_BYTES,
+                error
+              });
+              setSubmitError(IMAGE_TOO_LARGE_ERROR[locale]);
+              onSendFailed(optimisticMessage.id);
+              return;
+            }
+
             console.warn("chat image compression fallback to original", {
               fileName: image.fileName,
+              originalSize: image.file.size,
               error
             });
           }
@@ -240,6 +260,7 @@ export const ChatComposer = memo(function ChatComposer({
           const formData = new FormData();
           formData.set("chatId", chatId);
           formData.set("clientMessageId", clientId);
+          formData.set("locale", locale);
           formData.set("image", uploadFile);
 
           const result = await sendImageMessageAction(formData);

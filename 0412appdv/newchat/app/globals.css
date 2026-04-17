@@ -59,6 +59,21 @@ html.theme-soft {
   --chat-pattern-fill: rgba(255, 255, 255, 0.06);
 }
 
+html.theme-classic {
+  color-scheme: light;
+  --bg: 244 245 247;
+  --text: 31 41 55;
+  --surface: 255 255 255;
+  --surface-strong: 238 242 246;
+  --surface-border: 217 226 236;
+  --panel-shadow: 148 163 184;
+  --page-gradient:
+    linear-gradient(180deg, rgb(244 245 247), rgb(244 245 247));
+  --page-overlay: none;
+  --chat-pattern-stroke: rgba(170, 186, 204, 0.22);
+  --chat-pattern-fill: rgba(255, 255, 255, 0.05);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -100,6 +115,10 @@ html.theme-soft ::selection {
 
 html.theme-dark ::selection {
   background: rgba(102, 132, 214, 0.28);
+}
+
+html.theme-classic ::selection {
+  background: rgba(74, 144, 226, 0.22);
 }
 
 html [class*="bg-white/"] {
@@ -294,6 +313,72 @@ html.theme-soft [class*="focus:ring-rose-200"] {
   --tw-ring-color: rgba(246, 193, 199, 0.42) !important;
 }
 
+html.theme-classic [class*="bg-white"],
+html.theme-classic [class*="bg-slate-50"] {
+  background-color: rgb(255 255 255) !important;
+}
+
+html.theme-classic [class*="border-white"],
+html.theme-classic [class*="border-slate-100"],
+html.theme-classic [class*="border-slate-200"] {
+  border-color: rgb(217 226 236) !important;
+}
+
+html.theme-classic [class*="text-slate-900"],
+html.theme-classic [class*="text-ink"] {
+  color: rgb(31 41 55) !important;
+}
+
+html.theme-classic [class*="text-slate-700"] {
+  color: rgb(51 65 85) !important;
+}
+
+html.theme-classic [class*="text-slate-600"],
+html.theme-classic [class*="text-slate-500"],
+html.theme-classic [class*="text-slate-400"] {
+  color: rgb(100 116 139) !important;
+}
+
+html.theme-classic [class*="bg-brand-50"] {
+  background-color: rgb(238 244 252) !important;
+}
+
+html.theme-classic [class*="bg-brand-100"] {
+  background-color: rgb(220 234 249) !important;
+}
+
+html.theme-classic [class*="bg-brand-500"] {
+  background-color: rgb(74 144 226) !important;
+  color: rgb(255 255 255) !important;
+}
+
+html.theme-classic [class*="hover:bg-brand-600"]:hover,
+html.theme-classic [class*="hover:bg-brand-500"]:hover {
+  background-color: rgb(61 130 210) !important;
+}
+
+html.theme-classic [class*="text-brand-700"] {
+  color: rgb(58 111 177) !important;
+}
+
+html.theme-classic [class*="text-brand-500"] {
+  color: rgb(74 144 226) !important;
+}
+
+html.theme-classic [class*="border-brand-100"],
+html.theme-classic [class*="border-brand-200"],
+html.theme-classic [class*="border-brand-300"] {
+  border-color: rgb(217 226 236) !important;
+}
+
+html.theme-classic [class*="focus-visible:ring-brand-300"]:focus-visible {
+  --tw-ring-color: rgba(74, 144, 226, 0.38) !important;
+}
+
+html.theme-classic [class*="focus:ring-brand-100"]:focus {
+  --tw-ring-color: rgba(74, 144, 226, 0.24) !important;
+}
+
 html.theme-light [class*="bg-white"],
 html.theme-light [class*="bg-slate-50"] {
   background-color: rgb(255 255 255) !important;
@@ -310,7 +395,21 @@ html.theme-light [class*="bg-brand-50"] {
 }
 
 html.theme-light .primary-action-button {
+  background-color: rgb(62 105 182) !important;
   color: rgb(23 54 96) !important;
+}
+
+html.theme-light .primary-action-button:hover {
+  background-color: rgb(74 116 191) !important;
+}
+
+html.theme-light .chat-bubble-outgoing {
+  background-color: rgb(62 105 182) !important;
+  color: rgb(13 35 67) !important;
+}
+
+html.theme-light :is(button, a, p, span, h1, h2, h3, h4, h5, h6)[class*="text-white"] {
+  color: rgb(15 23 42) !important;
 }
 
 html.theme-light button[class*="bg-rose-500"],
@@ -331,6 +430,33 @@ html.theme-light [class*="bg-rose-50"] {
 html.theme-light [class*="border-rose-100"],
 html.theme-light [class*="border-rose-200"] {
   border-color: rgb(254 205 211) !important;
+}
+
+html.theme-classic .primary-action-button {
+  background-color: rgb(74 144 226) !important;
+  color: rgb(255 255 255) !important;
+}
+
+html.theme-classic .primary-action-button:hover {
+  background-color: rgb(61 130 210) !important;
+}
+
+html.theme-classic .secondary-action-button {
+  background-color: rgb(255 255 255) !important;
+  border-color: rgb(217 226 236) !important;
+  color: rgb(58 111 177) !important;
+}
+
+html.theme-classic .chat-bubble-outgoing {
+  background-color: rgb(121 178 245) !important;
+  border-color: rgb(121 178 245) !important;
+  color: rgb(26 42 66) !important;
+}
+
+html.theme-classic .chat-bubble-incoming {
+  background-color: rgb(214 225 234) !important;
+  border-color: rgb(214 225 234) !important;
+  color: rgb(36 51 71) !important;
 }
 
 @layer components {
@@ -357,6 +483,16 @@ html.theme-light [class*="border-rose-200"] {
     background-color: rgb(255 255 255) !important;
   }
 
+  html.theme-classic .friend-list-surface {
+    background-color: rgb(255 255 255) !important;
+    border-color: rgb(217 226 236) !important;
+  }
+
+  html.theme-classic .app-sidebar-shell {
+    background-color: rgb(238 242 246) !important;
+    border-color: rgb(217 226 236) !important;
+  }
+
   .glass-panel {
     @apply rounded-[28px];
     border: none;
@@ -379,6 +515,17 @@ html.theme-light [class*="border-rose-200"] {
   html.theme-dark .shadow-float {
     --tw-shadow: 0 14px 34px -20px rgba(148, 163, 184, 0.2);
     --tw-shadow-colored: 0 14px 34px -20px var(--tw-shadow-color);
+  }
+
+  html.theme-dark .chat-bubble-outgoing {
+    background-color: rgb(33 73 158) !important;
+    color: rgb(244 248 255) !important;
+  }
+
+  html.theme-dark .chat-bubble-incoming {
+    background-color: rgb(122 129 143) !important;
+    border-color: rgb(122 129 143) !important;
+    color: rgb(244 248 255) !important;
   }
 
   html :is(div, section, article, aside, main, header, footer, nav, form)[class*="border"]:not(.chat-list-border) {
@@ -422,6 +569,12 @@ html.theme-light [class*="border-rose-200"] {
   html.theme-soft .chat-room-pattern {
     background-image:
       url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='176' height='176' viewBox='0 0 176 176'%3E%3Cg stroke='rgba(156,163,175,0.24)' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='18' cy='18' r='7'/%3E%3Cpath d='M54 12l5 8 9 2-6 7 2 9-10-4-8 4 2-9-6-7 9-2z'/%3E%3Cpath d='M95 14l10 6-2 12-12 1-7-10 9-9z'/%3E%3Cpath d='M135 11l12 2 5 11-10 7-11-5 1-12z'/%3E%3Cpath d='M24 60l13 3 4 12-10 8-11-7 1-13z'/%3E%3Cpath d='M72 55l11 7-2 14-14 1-8-12 13-10z'/%3E%3Ccircle cx='118' cy='68' r='10'/%3E%3Cpath d='M154 54l11 8-3 13-14 2-8-11 14-12z'/%3E%3Cpath d='M16 114l7 11-7 10-12-4-2-12 9-7z'/%3E%3Ccircle cx='62' cy='118' r='8'/%3E%3Cpath d='M101 106l5 8 9 2-6 7 2 9-10-4-8 4 2-9-6-7 9-2z'/%3E%3Cpath d='M145 105l12 2 5 11-10 7-11-5 1-12z'/%3E%3Ccircle cx='22' cy='156' r='9'/%3E%3Cpath d='M82 148l11 7-2 14-14 1-8-12 13-10z'/%3E%3Cpath d='M124 145l5 8 9 2-6 7 2 9-10-4-8 4 2-9-6-7 9-2z'/%3E%3C/g%3E%3C/svg%3E");
+  }
+
+  html.theme-classic .chat-room-pattern {
+    background-color: rgb(244 245 247);
+    background-image:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='176' height='176' viewBox='0 0 176 176'%3E%3Cg stroke='rgba(170,186,204,0.22)' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='18' cy='18' r='7'/%3E%3Cpath d='M54 12l5 8 9 2-6 7 2 9-10-4-8 4 2-9-6-7 9-2z'/%3E%3Cpath d='M95 14l10 6-2 12-12 1-7-10 9-9z'/%3E%3Cpath d='M135 11l12 2 5 11-10 7-11-5 1-12z'/%3E%3Cpath d='M24 60l13 3 4 12-10 8-11-7 1-13z'/%3E%3Cpath d='M72 55l11 7-2 14-14 1-8-12 13-10z'/%3E%3Ccircle cx='118' cy='68' r='10'/%3E%3Cpath d='M154 54l11 8-3 13-14 2-8-11 14-12z'/%3E%3Cpath d='M16 114l7 11-7 10-12-4-2-12 9-7z'/%3E%3Ccircle cx='62' cy='118' r='8'/%3E%3Cpath d='M101 106l5 8 9 2-6 7 2 9-10-4-8 4 2-9-6-7 9-2z'/%3E%3Cpath d='M145 105l12 2 5 11-10 7-11-5 1-12z'/%3E%3Ccircle cx='22' cy='156' r='9'/%3E%3Cpath d='M82 148l11 7-2 14-14 1-8-12 13-10z'/%3E%3Cpath d='M124 145l5 8 9 2-6 7 2 9-10-4-8 4 2-9-6-7 9-2z'/%3E%3C/g%3E%3C/svg%3E");
   }
 }
 

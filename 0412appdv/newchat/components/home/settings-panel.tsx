@@ -17,7 +17,7 @@ import type { UserProfile } from "@/types/profile";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-type ThemeMode = "theme-light" | "theme-dark" | "theme-soft";
+type ThemeMode = "theme-light" | "theme-dark" | "theme-soft" | "theme-classic";
 type SettingsSubview = "settings" | "admin";
 
 const THEME_STORAGE_KEY = "talkbridge-theme";
@@ -50,7 +50,7 @@ export function HomeSettingsPanel({
     initialDeleteAccountFormState
   );
   const deleteError = deleteState?.error;
-  const [theme, setTheme] = useState<ThemeMode>("theme-light");
+  const [theme, setTheme] = useState<ThemeMode>("theme-soft");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [isLastSeenPending, startLastSeenTransition] = useTransition();
   const [isAdminUnblockPending, startAdminUnblockTransition] = useTransition();
@@ -84,7 +84,12 @@ export function HomeSettingsPanel({
 
     const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY) as ThemeMode | null;
     const nextTheme =
-      savedTheme === "theme-dark" || savedTheme === "theme-soft" ? savedTheme : "theme-light";
+      savedTheme === "theme-dark" ||
+      savedTheme === "theme-soft" ||
+      savedTheme === "theme-light" ||
+      savedTheme === "theme-classic"
+        ? savedTheme
+        : "theme-soft";
 
     setTheme(nextTheme);
     document.documentElement.className = nextTheme;
@@ -208,6 +213,11 @@ export function HomeSettingsPanel({
       value: "theme-light",
       label: "Ice",
       description: copy.settings.themeLightDescription
+    },
+    {
+      value: "theme-classic",
+      label: "Classic",
+      description: copy.settings.themeClassicDescription
     }
   ];
 
@@ -454,7 +464,7 @@ function SettingsMainContent({
         <p className="mt-1 text-[12px] leading-5 text-slate-500 sm:text-sm sm:leading-6">
           {copy.settings.themeDescription}
         </p>
-        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           {themeOptions.map((option) => {
             const active = theme === option.value;
 

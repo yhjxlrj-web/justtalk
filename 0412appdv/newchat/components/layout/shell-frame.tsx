@@ -3,6 +3,7 @@
 import { Suspense } from "react";
 import { usePathname } from "next/navigation";
 import { AppSidebar } from "@/components/layout/app-sidebar";
+import { AndroidBackButtonHandler } from "@/components/layout/android-back-button-handler";
 import { MobileTabBar } from "@/components/layout/mobile-tab-bar";
 import { cn } from "@/lib/utils";
 
@@ -18,6 +19,8 @@ export function ShellFrame({ children }: { children: React.ReactNode }) {
           : "mx-auto min-h-screen max-w-[1680px] px-0 pb-24 pt-4 sm:px-0 lg:px-8 lg:pb-8 lg:pt-6"
       )}
     >
+      <AndroidBackButtonHandler />
+
       <div
         className={cn(
           "flex min-w-0",

@@ -7,6 +7,7 @@ import { setupPush } from "@/lib/push/setup-push";
 import { AddFriendCard } from "@/components/home/add-friend-card";
 import { clearCachedRoomEntrySnapshot } from "@/components/chat/room-entry-cache";
 import { clearCachedRoomMessages } from "@/components/chat/room-message-cache";
+import { prewarmChatRoom } from "@/components/chat/room-preloader";
 import { CommunityList } from "@/components/home/community-list";
 import {
   getCachedCommunityProfiles,
@@ -396,9 +397,19 @@ const FriendsPanel = memo(function FriendsPanel({
         };
       });
 
-      updateCommunityProfiles((current) =>
-        current ? current.filter((profile) => profile.id !== params.otherUserId) : current
-      );
+      const patchCommunityProfiles = () =>
+        updateCommunityProfiles((current) =>
+          current ? current.filter((profile) => profile.id !== params.otherUserId) : current
+        );
+
+      if (typeof window === "undefined") {
+        patchCommunityProfiles();
+        return;
+      }
+
+      window.requestAnimationFrame(() => {
+        patchCommunityProfiles();
+      });
     },
     [updateCommunityProfiles, userId]
   );
@@ -834,11 +845,53 @@ export function HomeTabsView({
   const copy = getUiCopy(locale);
   const router = useRouter();
   const { activeTab, setActiveTab } = useHomeTabs();
-useEffect(() => {
-  if (!userId) return;
+  const pushSupabase = useMemo(() => createSupabaseBrowserClient(), []);
+  const handlePushRoomReceived = useCallback(
+    (roomId: string) => {
+      if (!roomId) {
+        return;
+      }
 
-  setupPush({ userId });
-}, [userId]);
+      console.log("home push room prewarm", {
+        roomId,
+        userId
+      });
+
+      void prewarmChatRoom({
+        roomId,
+        router,
+        supabase: pushSupabase,
+        viewerId: userId
+      });
+    },
+    [pushSupabase, router, userId]
+  );
+  const handlePushRoomAction = useCallback(
+    (roomId: string) => {
+      if (!roomId) {
+        return;
+      }
+
+      console.log("home push room route", {
+        roomId,
+        userId
+      });
+      router.push(`/chat/${roomId}`);
+    },
+    [router, userId]
+  );
+
+  useEffect(() => {
+    if (!userId) {
+      return;
+    }
+
+    void setupPush({
+      userId,
+      onRoomPushAction: handlePushRoomAction,
+      onRoomPushReceived: handlePushRoomReceived
+    });
+  }, [handlePushRoomAction, handlePushRoomReceived, userId]);
   const [hasSyncedInitialTab, setHasSyncedInitialTab] = useState(false);
   const [isHomeRefreshing, startHomeRefresh] = useTransition();
   const [friendsCache, setFriendsCache] = useState<FriendCollections | null>(initialFriends);

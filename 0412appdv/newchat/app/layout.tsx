@@ -25,7 +25,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="theme-light" suppressHydrationWarning>
+    <html lang="en" className="theme-soft" suppressHydrationWarning>
       <head>
         <script
           dangerouslySetInnerHTML={{
@@ -33,12 +33,16 @@ export default function RootLayout({
               (function() {
                 try {
                   var storedTheme = window.localStorage.getItem("${THEME_STORAGE_KEY}");
-                  var theme = storedTheme === "theme-dark" || storedTheme === "theme-soft"
+                  var theme =
+                    storedTheme === "theme-dark" ||
+                    storedTheme === "theme-soft" ||
+                    storedTheme === "theme-light" ||
+                    storedTheme === "theme-classic"
                     ? storedTheme
-                    : "theme-light";
+                    : "theme-soft";
                   document.documentElement.className = theme;
                 } catch (error) {
-                  document.documentElement.className = "theme-light";
+                  document.documentElement.className = "theme-soft";
                 }
               })();
             `

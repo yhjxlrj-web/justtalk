@@ -5,7 +5,7 @@ import { useDictionary } from "@/components/providers/dictionary-provider";
 import { cn } from "@/lib/utils";
 import type { ChatMessage } from "@/types/chat";
 
-const REACTION_EMOJIS = ["❤️", "👍", "🤣", "😭", "👌", "🙏"] as const;
+const REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "👏"] as const;
 
 export const MessageBubble = memo(function MessageBubble({
   message,
@@ -29,11 +29,12 @@ export const MessageBubble = memo(function MessageBubble({
   const dictionary = useDictionary();
   const outgoing = message.direction === "outgoing";
   const [showOriginal, setShowOriginal] = useState(false);
+  const [isOriginalTogglePending, setIsOriginalTogglePending] = useState(false);
   const [isReactionPickerOpen, setIsReactionPickerOpen] = useState(false);
   const longPressTimerRef = useRef<number | null>(null);
+  const originalToggleTimerRef = useRef<number | null>(null);
   const longPressTriggeredRef = useRef(false);
-  const canToggleOriginal =
-    !outgoing && !!message.originalBody && message.originalBody !== message.body;
+  const canToggleOriginal = !outgoing && !!message.originalBody && message.originalBody !== message.body;
   const canReact = !outgoing && !!onToggleReaction;
   const isImageMessage = message.messageType === "image" && !!message.imageUrl;
   const canOpenImage = isImageMessage && !!onOpenImage;
@@ -41,12 +42,23 @@ export const MessageBubble = memo(function MessageBubble({
   const showFooter = !!outgoing && !!footerText;
   const isUnreadFooter = showFooter && footerText === dictionary.unread;
   const showTimestampOutside = showTimestamp && !!message.timestamp;
-  const reserveFooterSpace = !isImageMessage;
+  const showRetryAction =
+    showFooter &&
+    footerText === dictionary.failedToSend &&
+    !!onRetryMessage &&
+    message.canRetry !== false;
+  const showMetaRow = showFooter || showTimestampOutside || showRetryAction;
 
   useEffect(() => {
     setShowOriginal(false);
+    setIsOriginalTogglePending(false);
     setIsReactionPickerOpen(false);
     longPressTriggeredRef.current = false;
+
+    if (originalToggleTimerRef.current !== null) {
+      window.clearTimeout(originalToggleTimerRef.current);
+      originalToggleTimerRef.current = null;
+    }
   }, [message.id, message.body, message.originalBody]);
 
   const clearLongPress = () => {
@@ -54,6 +66,20 @@ export const MessageBubble = memo(function MessageBubble({
       window.clearTimeout(longPressTimerRef.current);
       longPressTimerRef.current = null;
     }
+  };
+
+  const queueOriginalToggle = () => {
+    if (originalToggleTimerRef.current !== null) {
+      window.clearTimeout(originalToggleTimerRef.current);
+      originalToggleTimerRef.current = null;
+    }
+
+    setIsOriginalTogglePending(true);
+    originalToggleTimerRef.current = window.setTimeout(() => {
+      setShowOriginal((current) => !current);
+      setIsOriginalTogglePending(false);
+      originalToggleTimerRef.current = null;
+    }, 360);
   };
 
   const handlePointerDown = () => {
@@ -84,8 +110,21 @@ export const MessageBubble = memo(function MessageBubble({
       return;
     }
 
-    setShowOriginal((current) => !current);
+    if (isOriginalTogglePending) {
+      return;
+    }
+
+    queueOriginalToggle();
   };
+
+  useEffect(
+    () => () => {
+      if (originalToggleTimerRef.current !== null) {
+        window.clearTimeout(originalToggleTimerRef.current);
+      }
+    },
+    []
+  );
 
   return (
     <div
@@ -96,146 +135,124 @@ export const MessageBubble = memo(function MessageBubble({
         isSameSenderAsNext ? "mb-1" : "mb-3"
       )}
     >
-      <div
-        className={cn(
-          "flex w-full items-end",
-          outgoing ? "justify-end gap-1" : "justify-start gap-1"
-        )}
-      >
+      <div className={cn("flex w-full items-end", outgoing ? "justify-end gap-1" : "justify-start gap-1")}>
         <div className={cn("flex min-w-0 max-w-[80%] flex-col", outgoing ? "items-end" : "items-start")}>
           <div className="relative">
-          {isReactionPickerOpen && canReact ? (
-            <div className="absolute -top-14 left-0 z-10 flex items-center gap-1 rounded-full border border-slate-200 bg-[rgb(var(--surface-strong))] px-2 py-2 shadow-soft">
-              {REACTION_EMOJIS.map((emoji) => (
-                <button
-                  key={emoji}
-                  type="button"
-                  className="flex h-8 w-8 items-center justify-center rounded-full text-lg transition hover:bg-slate-50"
-                  onClick={async (event) => {
-                    event.stopPropagation();
-                    setIsReactionPickerOpen(false);
-                    await onToggleReaction?.(message.id, emoji);
-                  }}
-                >
-                  {emoji}
-                </button>
-              ))}
-            </div>
-          ) : null}
-
-          <div
-            role={canToggleOriginal || canOpenImage ? "button" : undefined}
-            tabIndex={canToggleOriginal || canOpenImage ? 0 : undefined}
-            onClick={handleBubbleClick}
-            onPointerDown={handlePointerDown}
-            onPointerUp={clearLongPress}
-            onPointerLeave={clearLongPress}
-            onPointerCancel={clearLongPress}
-            onContextMenu={(event) => {
-              if (!canReact) {
-                return;
-              }
-
-              event.preventDefault();
-              setIsReactionPickerOpen(true);
-            }}
-            onKeyDown={(event) => {
-              if (!canToggleOriginal && !canOpenImage) {
-                return;
-              }
-
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                handleBubbleClick();
-              }
-            }}
-            className={cn(
-      "inline-flex w-fit max-w-full flex-col rounded-[16px] px-3 py-1 text-left shadow-soft transition",
-      isImageMessage
-        ? "min-w-[104px]"
-        : "min-w-[63px] min-h-[23px] justify-between sm:min-w-[68px]",
-              outgoing
-                ? cn(
-                  "bg-brand-500 text-white shadow-float",
-                    isSameSenderAsPrev ? "rounded-tr-[10px]" : "rounded-tr-[16px]",
-                    isSameSenderAsNext ? "rounded-br-[10px]" : "rounded-br-[7px]"
-                  )
-                : cn(
-                    "border border-slate-100 bg-white text-slate-900",
-                    isSameSenderAsPrev ? "rounded-tl-[10px]" : "rounded-tl-[16px]",
-                    isSameSenderAsNext ? "rounded-bl-[10px]" : "rounded-bl-[7px]"
-                  )
-            )}
-          >
-            {isImageMessage ? (
-              <div className="flex">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={message.imageUrl}
-                  alt={message.attachmentName ?? "Shared image"}
-                  className={cn(
-                    "max-h-64 w-full rounded-[12px] object-cover",
-                    canOpenImage ? "cursor-zoom-in" : ""
-                  )}
-                />
-              </div>
-            ) : (
-              <p className="whitespace-pre-wrap break-keep text-[14px] leading-[1.25] [overflow-wrap:anywhere]">
-                {displayBody}
-              </p>
-            )}
-
-            {reserveFooterSpace ? (
-              <div
-                className={cn(
-                  "mt-0.5 flex min-h-[8px] w-full items-center justify-end gap-1 self-end text-[10px] leading-none",
-                  outgoing ? "text-white/95" : "text-slate-400"
-                )}
-              >
-                {showFooter &&
-                message.deliveryStatus === "failed" &&
-                onRetryMessage &&
-                message.canRetry !== false ? (
+            {isReactionPickerOpen && canReact ? (
+              <div className="absolute -top-14 left-0 z-10 flex items-center gap-1 rounded-full border border-slate-200 bg-[rgb(var(--surface-strong))] px-2 py-2 shadow-soft">
+                {REACTION_EMOJIS.map((emoji) => (
                   <button
+                    key={emoji}
                     type="button"
-                    className="rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] font-medium text-brand-700 transition hover:bg-slate-100"
-                    onClick={(event) => {
+                    className="flex h-8 w-8 items-center justify-center rounded-full text-lg transition hover:bg-slate-50"
+                    onClick={async (event) => {
                       event.stopPropagation();
-                      void onRetryMessage(message.id);
+                      setIsReactionPickerOpen(false);
+                      await onToggleReaction?.(message.id, emoji);
                     }}
                   >
-                    재전송
+                    {emoji}
                   </button>
-                ) : null}
-
-                {showFooter ? (
-                  <span
-                    className={cn(
-                      "inline-flex min-w-[42px] justify-end text-right whitespace-nowrap",
-                      isUnreadFooter ? "text-violet-500" : ""
-                    )}
-                  >
-                    {footerText}
-                  </span>
-                ) : (
-                  <span className="invisible inline-flex min-w-[1px] justify-end text-right whitespace-nowrap">
-                    .
-                  </span>
-                )}
+                ))}
               </div>
             ) : null}
-          </div>
-          </div>
 
-          {showTimestampOutside ? (
-            <p
+            <div
+              role={canToggleOriginal || canOpenImage ? "button" : undefined}
+              tabIndex={canToggleOriginal || canOpenImage ? 0 : undefined}
+              onClick={handleBubbleClick}
+              onPointerDown={handlePointerDown}
+              onPointerUp={clearLongPress}
+              onPointerLeave={clearLongPress}
+              onPointerCancel={clearLongPress}
+              onContextMenu={(event) => {
+                if (!canReact) {
+                  return;
+                }
+
+                event.preventDefault();
+                setIsReactionPickerOpen(true);
+              }}
+              onKeyDown={(event) => {
+                if (!canToggleOriginal && !canOpenImage) {
+                  return;
+                }
+
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  handleBubbleClick();
+                }
+              }}
               className={cn(
-                "mt-1 px-1 text-[10px] leading-none text-slate-400",
-                outgoing ? "text-right" : "text-left"
+                "chat-bubble inline-flex w-fit max-w-full flex-col rounded-[16px] text-left shadow-soft transition",
+                isOriginalTogglePending ? "ring-1 ring-brand-200/70" : "",
+                isImageMessage ? "min-w-[104px] p-1.5" : "min-w-[63px] px-3 py-2 sm:min-w-[68px]",
+                outgoing
+                  ? cn(
+                      "chat-bubble-outgoing bg-brand-500 text-white shadow-float",
+                      isSameSenderAsPrev ? "rounded-tr-[10px]" : "rounded-tr-[16px]",
+                      isSameSenderAsNext ? "rounded-br-[10px]" : "rounded-br-[7px]"
+                    )
+                  : cn(
+                      "chat-bubble-incoming border border-slate-100 bg-white text-slate-900",
+                      isSameSenderAsPrev ? "rounded-tl-[10px]" : "rounded-tl-[16px]",
+                      isSameSenderAsNext ? "rounded-bl-[10px]" : "rounded-bl-[7px]"
+                    )
               )}
             >
-              {message.timestamp}
-            </p>
+              {isImageMessage ? (
+                <div className="flex">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={message.imageUrl}
+                    alt={message.attachmentName ?? "Shared image"}
+                    className={cn(
+                      "max-h-64 w-full rounded-[12px] object-cover",
+                      canOpenImage ? "cursor-zoom-in" : ""
+                    )}
+                  />
+                </div>
+              ) : (
+                <p className="whitespace-pre-wrap break-words text-[14px] leading-[1.4] [overflow-wrap:anywhere]">
+                  {displayBody}
+                </p>
+              )}
+            </div>
+          </div>
+
+          {showMetaRow ? (
+            <div
+              className={cn(
+                "mt-1 flex w-full items-center gap-1 px-1 text-[10px] leading-none",
+                outgoing ? "justify-end text-right" : "justify-start text-left"
+              )}
+            >
+              {showRetryAction ? (
+                <button
+                  type="button"
+                  className="rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] font-medium text-brand-700 transition hover:bg-slate-100"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void onRetryMessage?.(message.id);
+                  }}
+                >
+                  {dictionary.failedToSend}
+                </button>
+              ) : null}
+
+              {showFooter ? (
+                <span
+                  className={cn(
+                    "inline-flex min-w-[42px] justify-end whitespace-nowrap text-slate-500",
+                    isUnreadFooter ? "text-violet-500" : ""
+                  )}
+                >
+                  {footerText}
+                </span>
+              ) : null}
+
+              {showTimestampOutside ? <span className="text-slate-400">{message.timestamp}</span> : null}
+            </div>
           ) : null}
 
           {showOriginal && canToggleOriginal ? (

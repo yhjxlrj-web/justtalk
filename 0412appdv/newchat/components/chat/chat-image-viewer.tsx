@@ -141,6 +141,7 @@ export function ChatImageViewer({
       role="dialog"
       aria-modal="true"
       aria-label={message.attachmentName ?? "Image viewer"}
+      data-android-back-close="true"
       onClick={onClose}
     >
       <div className="absolute right-4 top-4 z-10 flex items-center gap-2">

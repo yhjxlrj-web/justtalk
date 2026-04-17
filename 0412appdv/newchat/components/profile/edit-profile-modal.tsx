@@ -5,6 +5,7 @@ import { Camera, Eye, ImagePlus, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCurrentLocale, useDictionary } from "@/components/providers/dictionary-provider";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/button";
+import { compressImageFile } from "@/lib/images/compress-image";
 import { Input } from "@/components/ui/input";
 import { initialEditProfileFormState } from "@/lib/profile/action-state";
 import { editProfileAction } from "@/lib/profile/actions";
@@ -25,6 +26,12 @@ function getSavedProfileKey(profile: UserProfile) {
   ].join(":");
 }
 
+const PHOTO_TOO_LARGE_MESSAGE = {
+  en: "Please choose an image under 5MB.",
+  es: "Elige una imagen menor de 5 MB.",
+  ko: "5MB 이하 이미지를 선택해 주세요."
+} as const;
+
 export function EditProfileModal({
   isOpen,
   onClose,
@@ -43,6 +50,8 @@ export function EditProfileModal({
   const [isPhotoMenuOpen, setIsPhotoMenuOpen] = useState(false);
   const [isAvatarViewerOpen, setIsAvatarViewerOpen] = useState(false);
   const [selectedPhotoPreviewUrl, setSelectedPhotoPreviewUrl] = useState<string | null>(null);
+  const [localPhotoError, setLocalPhotoError] = useState<string | null>(null);
+  const [isPhotoCompressing, setIsPhotoCompressing] = useState(false);
   const errors = state?.errors ?? {};
   const dictionary = useDictionary();
   const locale = useCurrentLocale();
@@ -138,6 +147,7 @@ export function EditProfileModal({
     if (!isOpen) {
       setIsPhotoMenuOpen(false);
       setIsAvatarViewerOpen(false);
+      setLocalPhotoError(null);
     }
   }, [isOpen]);
 
@@ -155,22 +165,69 @@ export function EditProfileModal({
 
   const avatarInitial = (profile?.displayName?.charAt(0) || "U").toUpperCase();
 
-  const handlePhotoSelection = (event: ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoSelection = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
 
     if (!file) {
+      setLocalPhotoError(null);
       return;
     }
 
-    const nextPreviewUrl = URL.createObjectURL(file);
-    setSelectedPhotoPreviewUrl((previousPreviewUrl) => {
-      if (previousPreviewUrl) {
-        URL.revokeObjectURL(previousPreviewUrl);
-      }
+    setLocalPhotoError(null);
+    setIsPhotoCompressing(true);
 
-      return nextPreviewUrl;
-    });
-    setIsPhotoMenuOpen(false);
+    try {
+      const compressed = await compressImageFile(file, {
+        jpegQuality: 0.82,
+        maxDimension: 1440,
+        minBypassBytes: 240 * 1024,
+        webpQuality: 0.8
+      });
+      const fileForSubmit = compressed.compressedFile;
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(fileForSubmit);
+      const mutableInput = event.target as HTMLInputElement & { files: FileList | null };
+      mutableInput.files = dataTransfer.files;
+
+      const nextPreviewUrl = URL.createObjectURL(fileForSubmit);
+      setSelectedPhotoPreviewUrl((previousPreviewUrl) => {
+        if (previousPreviewUrl) {
+          URL.revokeObjectURL(previousPreviewUrl);
+        }
+
+        return nextPreviewUrl;
+      });
+
+      console.log("profile edit image compression", {
+        compressedSize: compressed.compressedSize,
+        fileName: file.name,
+        originalSize: compressed.originalSize,
+        wasCompressed: compressed.wasCompressed
+      });
+    } catch (error) {
+      if (file.size > 5 * 1024 * 1024) {
+        event.target.value = "";
+        setLocalPhotoError(PHOTO_TOO_LARGE_MESSAGE[locale]);
+      } else {
+        const nextPreviewUrl = URL.createObjectURL(file);
+        setSelectedPhotoPreviewUrl((previousPreviewUrl) => {
+          if (previousPreviewUrl) {
+            URL.revokeObjectURL(previousPreviewUrl);
+          }
+
+          return nextPreviewUrl;
+        });
+        console.warn("profile edit image compression fallback to original", {
+          error,
+          fileName: file.name,
+          originalSize: file.size
+        });
+      }
+    } finally {
+      setIsPhotoCompressing(false);
+      setIsPhotoMenuOpen(false);
+    }
+
   };
 
   return (
@@ -179,6 +236,7 @@ export function EditProfileModal({
         <button
           type="button"
           className="absolute inset-0 cursor-default"
+          data-android-back-close="true"
           onClick={requestClose}
           aria-label={copy.editProfile.closePanelAria}
         />
@@ -242,6 +300,12 @@ export function EditProfileModal({
                     </p>
                     {errors.photo ? (
                       <span className="mt-2 block text-xs text-rose-500">{errors.photo}</span>
+                    ) : null}
+                    {isPhotoCompressing ? (
+                      <span className="mt-2 block text-xs text-slate-500">{copy.editProfile.saving}</span>
+                    ) : null}
+                    {localPhotoError ? (
+                      <span className="mt-2 block text-xs text-rose-500">{localPhotoError}</span>
                     ) : null}
                   </div>
                 </div>
@@ -371,7 +435,7 @@ export function EditProfileModal({
               <SecondaryButton type="button" className="flex-1" onClick={onClose}>
                 {dictionary.cancel}
               </SecondaryButton>
-              <PrimaryButton type="submit" className="flex-1" disabled={isPending}>
+              <PrimaryButton type="submit" className="flex-1" disabled={isPending || isPhotoCompressing}>
                 {isPending ? copy.editProfile.saving : dictionary.save}
               </PrimaryButton>
             </div>
@@ -382,6 +446,7 @@ export function EditProfileModal({
       {isAvatarViewerOpen && currentAvatarUrl ? (
         <div
           className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/82 px-4 py-6"
+          data-android-back-close="true"
           onClick={() => setIsAvatarViewerOpen(false)}
         >
           <button

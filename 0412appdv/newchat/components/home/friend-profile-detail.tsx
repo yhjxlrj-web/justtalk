@@ -87,6 +87,7 @@ export function FriendProfileDetail({
         type="button"
         className="absolute inset-0"
         aria-label={closeProfileLabel}
+        data-android-back-close="true"
         onClick={requestClose}
       />
 

@@ -240,6 +240,7 @@ export const RoomHeader = memo(function RoomHeader({
                 type="button"
                 aria-label={dictionary.close}
                 className="absolute inset-0 cursor-default bg-transparent"
+                data-android-back-close="true"
                 onClick={() => setIsMenuOpen(false)}
               />
 

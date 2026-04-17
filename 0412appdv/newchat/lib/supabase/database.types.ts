@@ -169,6 +169,53 @@ export type Database = {
           avatar_url_snapshot?: string | null;
         };
       };
+      chat_room_summaries: {
+        Row: {
+          id: string;
+          room_id: string;
+          user_id: string;
+          peer_user_id: string | null;
+          peer_display_name_snapshot: string | null;
+          peer_avatar_snapshot: string | null;
+          peer_preferred_language_snapshot: string | null;
+          last_message_id: string | null;
+          last_message_preview: string | null;
+          last_message_created_at: string | null;
+          unread_count: number;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          room_id: string;
+          user_id: string;
+          peer_user_id?: string | null;
+          peer_display_name_snapshot?: string | null;
+          peer_avatar_snapshot?: string | null;
+          peer_preferred_language_snapshot?: string | null;
+          last_message_id?: string | null;
+          last_message_preview?: string | null;
+          last_message_created_at?: string | null;
+          unread_count?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          room_id?: string;
+          user_id?: string;
+          peer_user_id?: string | null;
+          peer_display_name_snapshot?: string | null;
+          peer_avatar_snapshot?: string | null;
+          peer_preferred_language_snapshot?: string | null;
+          last_message_id?: string | null;
+          last_message_preview?: string | null;
+          last_message_created_at?: string | null;
+          unread_count?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
       messages: {
         Row: {
           id: string;

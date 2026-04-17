@@ -1,5 +1,9 @@
 import { getChatParticipantContext } from "@/lib/chats/participant-context";
 import {
+  ensureChatRoomSummaries,
+  isChatRoomSummaryUnavailableError
+} from "@/lib/chats/room-summary";
+import {
   getBlockedUserIdSetForBlocker,
   getFriendshipBetweenUsers,
   hasUserBlocked
@@ -58,6 +62,20 @@ type TranslationRow = {
   translated_text?: string | null;
 };
 
+type ChatRoomSummaryRow = {
+  room_id: string;
+  user_id: string;
+  peer_user_id?: string | null;
+  peer_display_name_snapshot?: string | null;
+  peer_avatar_snapshot?: string | null;
+  peer_preferred_language_snapshot?: string | null;
+  last_message_id?: string | null;
+  last_message_preview?: string | null;
+  last_message_created_at?: string | null;
+  unread_count?: number | null;
+  updated_at?: string | null;
+};
+
 function getRelatedProfileForDirectChat(
   allParticipantRows: ChatParticipantRow[],
   profileMap: Map<string, ProfileRow>,
@@ -101,57 +119,254 @@ function mapRoomRowToPreview(
   };
 }
 
-function formatPeerLastSeenLabel(lastSeenAt: string, locale: SupportedLocale) {
-  const lastSeenDate = new Date(lastSeenAt);
-  const lastSeenTime = lastSeenDate.getTime();
-
-  if (Number.isNaN(lastSeenTime)) {
-    return "";
+function toChatSortTimestamp(value?: string | null) {
+  if (!value) {
+    return 0;
   }
 
-  const now = new Date();
-  const diffMinutes = Math.max(0, Math.floor((now.getTime() - lastSeenTime) / 60000));
-  const labels = {
-    en: { online: "Online", today: "Today" },
-    ko: { online: "온라인", today: "오늘" },
-    es: { online: "En línea", today: "Hoy" }
-  }[locale];
+  const timestamp = new Date(value).getTime();
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
 
-  if (diffMinutes < 2) {
-    return labels.online;
+async function getChatRoomPreviewsFromSummaryRows(client: any, userId: string) {
+  const { data: participantRows, error: participantError } = await getVerifiedChatMemberships(
+    client,
+    userId
+  );
+
+  if (participantError) {
+    console.error("getChatRoomPreviews summary membership error", participantError);
+    return [] as ChatRoomPreview[];
   }
 
-  if (diffMinutes < 60) {
-    if (locale === "ko") {
-      return `${diffMinutes}분 전`;
+  const chatIds = participantRows?.map((row) => row.chat_id) ?? [];
+
+  if (chatIds.length === 0) {
+    return [] as ChatRoomPreview[];
+  }
+
+  const { data: chatRows, error: chatError } = (await client
+    .from("chats")
+    .select("id, title, avatar_url, updated_at, chat_type")
+    .in("id", chatIds)
+    .order("updated_at", { ascending: false })) as {
+    data: ChatRow[] | null;
+    error: { code?: string; message?: string } | null;
+  };
+
+  if (chatError || !chatRows) {
+    console.error("getChatRoomPreviews summary chats error", chatError);
+    return [] as ChatRoomPreview[];
+  }
+
+  const summarySelect =
+    "room_id, user_id, peer_user_id, peer_display_name_snapshot, peer_avatar_snapshot, peer_preferred_language_snapshot, last_message_id, last_message_preview, last_message_created_at, unread_count, updated_at";
+  const { data: summaryRows, error: summaryError } = (await client
+    .from("chat_room_summaries")
+    .select(summarySelect)
+    .eq("user_id", userId)
+    .in("room_id", chatIds)) as {
+    data: ChatRoomSummaryRow[] | null;
+    error: { code?: string; message?: string } | null;
+  };
+
+  if (summaryError) {
+    if (isChatRoomSummaryUnavailableError(summaryError)) {
+      return null;
     }
 
-    if (locale === "es") {
-      return `Hace ${diffMinutes} min`;
+    console.error("getChatRoomPreviews summary query error", {
+      userId,
+      summaryError
+    });
+    return null;
+  }
+
+  let resolvedSummaryRows = summaryRows ?? [];
+  const summaryByRoomId = new Map(resolvedSummaryRows.map((row) => [row.room_id, row]));
+  const missingSummaryRoomIds = chatRows
+    .map((row) => row.id)
+    .filter((roomId) => !summaryByRoomId.has(roomId));
+
+  if (missingSummaryRoomIds.length > 0) {
+    for (const roomId of missingSummaryRoomIds) {
+      await ensureChatRoomSummaries(roomId);
     }
 
-    return `${diffMinutes} min ago`;
+    const { data: reloadedSummaryRows, error: reloadSummaryError } = (await client
+      .from("chat_room_summaries")
+      .select(summarySelect)
+      .eq("user_id", userId)
+      .in("room_id", chatIds)) as {
+      data: ChatRoomSummaryRow[] | null;
+      error: { code?: string; message?: string } | null;
+    };
+
+    if (reloadSummaryError) {
+      if (isChatRoomSummaryUnavailableError(reloadSummaryError)) {
+        return null;
+      }
+
+      console.error("getChatRoomPreviews summary reload error", {
+        userId,
+        reloadSummaryError
+      });
+      return null;
+    }
+
+    resolvedSummaryRows = reloadedSummaryRows ?? [];
+    summaryByRoomId.clear();
+    for (const row of resolvedSummaryRows) {
+      summaryByRoomId.set(row.room_id, row);
+    }
   }
 
-  const sameDay =
-    now.getFullYear() === lastSeenDate.getFullYear() &&
-    now.getMonth() === lastSeenDate.getMonth() &&
-    now.getDate() === lastSeenDate.getDate();
-  const timeText = new Intl.DateTimeFormat(locale, {
-    hour: "2-digit",
-    minute: "2-digit"
-  }).format(lastSeenDate);
+  const directRoomsWithoutPeerSummary = chatRows
+    .filter((row) => row.chat_type === "direct")
+    .map((row) => row.id)
+    .filter((roomId) => !(summaryByRoomId.get(roomId)?.peer_user_id));
 
-  if (sameDay) {
-    return `${labels.today} ${timeText}`;
+  const peerUserIdByRoomId = new Map<string, string>();
+
+  for (const row of resolvedSummaryRows) {
+    if (row.peer_user_id) {
+      peerUserIdByRoomId.set(row.room_id, row.peer_user_id);
+    }
   }
 
-  return new Intl.DateTimeFormat(locale, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit"
-  }).format(lastSeenDate);
+  if (directRoomsWithoutPeerSummary.length > 0) {
+    const { data: directPeerRows, error: directPeerError } = (await client
+      .from("chat_participants")
+      .select("chat_id, user_id")
+      .in("chat_id", directRoomsWithoutPeerSummary)
+      .neq("user_id", userId)) as {
+      data: Array<{ chat_id: string; user_id: string }> | null;
+      error: { code?: string; message?: string } | null;
+    };
+
+    if (directPeerError) {
+      console.error("getChatRoomPreviews direct peer fallback error", {
+        userId,
+        directPeerError
+      });
+      return null;
+    }
+
+    for (const row of directPeerRows ?? []) {
+      peerUserIdByRoomId.set(row.chat_id, row.user_id);
+    }
+  }
+
+  const directPeerIds = chatRows
+    .filter((row) => row.chat_type === "direct")
+    .map((row) => peerUserIdByRoomId.get(row.id))
+    .filter(Boolean) as string[];
+
+  let blockedUserIds = new Set<string>();
+
+  if (directPeerIds.length > 0) {
+    try {
+      blockedUserIds = await getBlockedUserIdSetForBlocker(userId, directPeerIds);
+    } catch (error) {
+      console.error("getChatRoomPreviews summary block lookup error", {
+        userId,
+        error
+      });
+    }
+  }
+
+  const { data: peerPresenceRows, error: peerPresenceError } =
+    directPeerIds.length > 0
+      ? ((await client
+          .from("profiles")
+          .select("id, last_seen_at, show_last_seen")
+          .in("id", directPeerIds)) as {
+          data: ProfileRow[] | null;
+          error: { code?: string; message?: string } | null;
+        })
+      : { data: [], error: null };
+
+  if (peerPresenceError) {
+    console.error("getChatRoomPreviews summary peer presence error", peerPresenceError);
+  }
+
+  const peerLastSeenByUserId = new Map(
+    (peerPresenceRows ?? [])
+      .filter((row) => row.show_last_seen !== false && !!row.last_seen_at)
+      .map((row) => [row.id, row.last_seen_at ?? null])
+  );
+  const viewerLastSeenByRoomId = new Map(
+    (participantRows ?? []).map((row) => [row.chat_id, row.last_seen_at ?? null])
+  );
+
+  const unsortedPreviews = chatRows.flatMap((row) => {
+    const summary = summaryByRoomId.get(row.id);
+    const peerUserId = peerUserIdByRoomId.get(row.id);
+
+    if (row.chat_type === "direct" && peerUserId && blockedUserIds.has(peerUserId)) {
+      return [];
+    }
+
+    const latestMessageCreatedAt =
+      summary?.last_message_created_at ?? summary?.updated_at ?? row.updated_at ?? undefined;
+
+    return [
+      {
+        id: `chat-preview-${row.id}`,
+        roomId: row.id,
+        peerUserId,
+        recipientName:
+          summary?.peer_display_name_snapshot?.trim() || row.title || "Untitled chat",
+        recipientAvatarUrl:
+          summary?.peer_avatar_snapshot ?? row.avatar_url ?? undefined,
+        latestMessagePreview:
+          summary?.last_message_preview?.trim() || "No messages yet.",
+        latestMessageAt: latestMessageCreatedAt
+          ? formatChatTimestamp(latestMessageCreatedAt)
+          : "Just now",
+        latestMessageCreatedAt,
+        peerLastSeenAt: peerUserId
+          ? peerLastSeenByUserId.get(peerUserId) ?? undefined
+          : undefined,
+        viewerLastSeenAt: viewerLastSeenByRoomId.get(row.id) ?? undefined,
+        lastMessageId: summary?.last_message_id ?? undefined,
+        unreadCount: Math.max(0, summary?.unread_count ?? 0),
+        selected: false
+      } satisfies ChatRoomPreview
+    ];
+  });
+
+  const sortedPreviews = [...unsortedPreviews].sort((left, right) => {
+    const leftTimestamp = toChatSortTimestamp(left.latestMessageCreatedAt);
+    const rightTimestamp = toChatSortTimestamp(right.latestMessageCreatedAt);
+    return rightTimestamp - leftTimestamp;
+  });
+
+  return sortedPreviews.map((preview, index) => ({
+    ...preview,
+    selected: index === 0
+  }));
+}
+
+function resolvePresenceLocale(
+  preferredLanguage: string | null | undefined,
+  fallbackLocale: SupportedLocale
+): SupportedLocale {
+  const normalized = preferredLanguage?.trim().toLowerCase() ?? "";
+
+  if (normalized === "ko" || normalized.startsWith("ko")) {
+    return "ko";
+  }
+
+  if (normalized === "es" || normalized.startsWith("es")) {
+    return "es";
+  }
+
+  if (normalized === "en" || normalized.startsWith("en")) {
+    return "en";
+  }
+
+  return fallbackLocale;
 }
 
 const ONLINE_ACTIVITY_WINDOW_MS = 2 * 60 * 1000;
@@ -168,7 +383,15 @@ function formatRelativePeerPresenceLabel(
   }
 
   if (isOnline) {
-    return formatPeerLastSeenLabel(new Date().toISOString(), locale);
+    if (locale === "ko") {
+      return "온라인";
+    }
+
+    if (locale === "es") {
+      return "En linea";
+    }
+
+    return "Online";
   }
 
   const diffMinutes = Math.max(0, Math.floor((Date.now() - lastSeenTime) / 60000));
@@ -204,7 +427,7 @@ function formatRelativePeerPresenceLabel(
     }
 
     const days = Math.max(1, Math.floor(diffMinutes / (24 * 60)));
-    return `Activo hace ${days} ${days === 1 ? "día" : "días"}`;
+    return `Activo hace ${days} ${days === 1 ? "dia" : "dias"}`;
   }
 
   if (diffMinutes < 60) {
@@ -279,6 +502,12 @@ async function getParticipantsAndProfilesWithAdmin(chatIds: string[]) {
 }
 
 export async function getChatRoomPreviews(client: any, userId: string): Promise<ChatRoomPreview[]> {
+  const summaryPreviews = await getChatRoomPreviewsFromSummaryRows(client, userId);
+
+  if (summaryPreviews !== null) {
+    return summaryPreviews;
+  }
+
   const { data: participantRows, error: participantError } = await getVerifiedChatMemberships(
     client,
     userId
@@ -533,7 +762,7 @@ export async function getChatRoomSummary(
     return null;
   }
 
-  const locale = await getServerAuthLocale();
+  const fallbackLocale = await getServerAuthLocale();
 
   const { data: membershipRows, error: membershipError } = await getVerifiedChatMemberships(
     client,
@@ -574,6 +803,10 @@ export async function getChatRoomSummary(
   const relatedProfile = context.otherProfile;
   const viewerParticipant = context.viewerParticipant;
   const otherParticipant = context.otherParticipant;
+  const locale = resolvePresenceLocale(
+    viewerParticipant?.preferred_language_snapshot ?? context.viewerProfile?.preferred_language,
+    fallbackLocale
+  );
 
   if (chatRow.chat_type === "direct" && otherParticipant) {
     try {
@@ -848,6 +1081,7 @@ export async function findOrCreateDirectChat(
           participantSet.has(currentUserId) &&
           participantSet.has(otherUserId)
         ) {
+          await ensureChatRoomSummaries(chatId);
           return chatId;
         }
       }
@@ -895,5 +1129,8 @@ export async function findOrCreateDirectChat(
     );
   }
 
+  await ensureChatRoomSummaries(newChatRow.id);
+
   return newChatRow.id;
 }
+

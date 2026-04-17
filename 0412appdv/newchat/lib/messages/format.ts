@@ -30,6 +30,10 @@ export function mapViewerMessage(params: {
   translatedLanguage?: string | null;
 }): ChatMessage {
   const outgoing = params.senderId === params.viewerId;
+  const incomingDisplayText =
+    params.translatedText && params.translatedText.trim().length > 0
+      ? params.translatedText
+      : "…";
 
   return {
     id: params.id,
@@ -39,8 +43,8 @@ export function mapViewerMessage(params: {
     direction: outgoing ? "outgoing" : "incoming",
     messageType: params.messageType ?? "text",
     originalText: params.originalText,
-    displayText: outgoing ? params.originalText : params.translatedText ?? params.originalText,
-    body: outgoing ? params.originalText : params.translatedText ?? params.originalText,
+    displayText: outgoing ? params.originalText : incomingDisplayText,
+    body: outgoing ? params.originalText : incomingDisplayText,
     originalBody: outgoing ? undefined : params.originalText,
     senderLanguage: params.originalLanguage,
     targetLanguage: outgoing

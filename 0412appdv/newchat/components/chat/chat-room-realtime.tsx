@@ -3,7 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { ChatRoom } from "@/components/chat/chat-room";
-import { patchCachedChatPreview } from "@/components/home/chat-preview-cache";
+import {
+  getCachedChatPreviews,
+  mergeChatPreviews,
+  patchCachedChatPreview,
+  setCachedChatPreviews
+} from "@/components/home/chat-preview-cache";
 import { useCurrentLocale } from "@/components/providers/dictionary-provider";
 import {
   clearCachedRoomEntrySnapshot,
@@ -64,6 +69,18 @@ type RealtimeReactionRow = {
   created_at: string;
 };
 
+type ChatRoomSummaryCacheRow = {
+  room_id: string;
+  peer_user_id?: string | null;
+  peer_display_name_snapshot?: string | null;
+  peer_avatar_snapshot?: string | null;
+  last_message_id?: string | null;
+  last_message_preview?: string | null;
+  last_message_created_at?: string | null;
+  unread_count?: number | null;
+  updated_at?: string | null;
+};
+
 type RoomMessageBatch = {
   firstUnreadMessageId: string | null;
   hasOlderMessages: boolean;
@@ -75,6 +92,40 @@ const REACTION_ORDER = ["?ㅿ툘", "?몟", "?ㄳ", "?삲", "?몞", "?솋"] as co
 
 const QUICK_GREETING_MESSAGE = "안녕하세요 😊";
 
+const MESSAGE_STATUS_PATCH_BUFFER_MS = 360;
+const HOME_CACHE_PREWARM_SUMMARY_LIMIT = 12;
+const ROOM_ENTRY_SUMMARY_PREWARM_DELAY_MS = 900;
+const PENDING_TRANSLATION_PLACEHOLDER = "…";
+const initialRoomMessageBatchInflight = new Map<string, Promise<RoomMessageBatch>>();
+
+function getRoomEntryKey(roomId: string, viewerId: string) {
+  return `${roomId}:${viewerId}`;
+}
+
+function fetchInitialRoomMessageBatchWithDedupe(params: {
+  roomId: string;
+  supabase: any;
+  viewerId: string;
+}) {
+  const key = getRoomEntryKey(params.roomId, params.viewerId);
+  const inflightRequest = initialRoomMessageBatchInflight.get(key);
+
+  if (inflightRequest) {
+    return inflightRequest;
+  }
+
+  const nextRequest = fetchInitialRoomMessageBatch(params).finally(() => {
+    const currentRequest = initialRoomMessageBatchInflight.get(key);
+
+    if (currentRequest === nextRequest) {
+      initialRoomMessageBatchInflight.delete(key);
+    }
+  });
+
+  initialRoomMessageBatchInflight.set(key, nextRequest);
+  return nextRequest;
+}
+
 function sortMessages(messages: ChatMessage[]) {
   return [...messages].sort((left, right) => {
     const leftTime = left.createdAt ? new Date(left.createdAt).getTime() : 0;
@@ -83,58 +134,120 @@ function sortMessages(messages: ChatMessage[]) {
   });
 }
 
-function applyReadStatuses(
-  messages: ChatMessage[],
-  otherUserLastSeenAt: string | null
-): ChatMessage[] {
+type MessageDeliveryStatus = "sending" | "sent" | "failed";
+type MessageStatusEntry = {
+  deliveryStatus: MessageDeliveryStatus;
+  readStatus: "read" | "unread" | null;
+};
+type MessageStatusMap = Record<string, MessageStatusEntry>;
+type MessageStatusPatchMap = Record<string, Partial<MessageStatusEntry>>;
+
+function getMessageStatusKey(message: Pick<ChatMessage, "id" | "clientId">) {
+  return message.clientId ?? message.id;
+}
+
+function resolveMessageDeliveryStatus(
+  message: Pick<ChatMessage, "direction" | "deliveryStatus">,
+  existingStatus?: MessageDeliveryStatus
+): MessageDeliveryStatus {
+  if (existingStatus) {
+    return existingStatus;
+  }
+
+  if (message.deliveryStatus) {
+    return message.deliveryStatus;
+  }
+
+  return message.direction === "outgoing" ? "sent" : "sent";
+}
+
+function buildMessageStatusMap(params: {
+  messages: ChatMessage[];
+  otherUserLastSeenAt: string | null;
+  previousStatusMap?: MessageStatusMap;
+}): MessageStatusMap {
+  const { messages, otherUserLastSeenAt, previousStatusMap } = params;
   const orderedMessages = sortMessages(messages);
-  const outgoingMessages = orderedMessages.filter(
-    (message) => message.direction === "outgoing" && message.deliveryStatus !== "failed"
-  );
-  const readOutgoingMessages = outgoingMessages.filter(
-    (message) =>
-      otherUserLastSeenAt &&
-      message.createdAt &&
-      new Date(message.createdAt).getTime() <= new Date(otherUserLastSeenAt).getTime()
-  );
-  const lastReadMessageId =
-    readOutgoingMessages.length > 0
-      ? readOutgoingMessages[readOutgoingMessages.length - 1].id
-      : null;
-  const outgoingOrder = new Map(outgoingMessages.map((message, index) => [message.id, index]));
-  const lastReadOrder =
-    lastReadMessageId !== null ? outgoingOrder.get(lastReadMessageId) ?? -1 : -1;
+  const nextStatusMap: MessageStatusMap = {};
+  const outgoingStatusIndex = new Map<string, number>();
+  const readableOutgoingKeys: string[] = [];
+  const otherUserLastSeenAtTime = otherUserLastSeenAt ? new Date(otherUserLastSeenAt).getTime() : null;
+  let lastReadMessageKey: string | null = null;
 
-  return orderedMessages.map((message) => {
-    if (message.direction !== "outgoing" || message.deliveryStatus === "failed") {
-      return message.readStatus === null ? message : { ...message, readStatus: null };
-    }
-
-    if (message.deliveryStatus === "sending") {
-      return message.readStatus === null ? message : { ...message, readStatus: null };
-    }
-
-    const currentOutgoingOrder = outgoingOrder.get(message.id);
-    let readStatus: ChatMessage["readStatus"] = null;
-
-    if (message.id === lastReadMessageId) {
-      readStatus = "read";
-    } else if (currentOutgoingOrder !== undefined && currentOutgoingOrder > lastReadOrder) {
-      readStatus = "unread";
-    }
-
-    const nextDeliveryStatus = message.deliveryStatus ?? "sent";
-
-    if (message.readStatus === readStatus && message.deliveryStatus === nextDeliveryStatus) {
-      return message;
-    }
-
-    return {
-      ...message,
-      deliveryStatus: nextDeliveryStatus,
-      readStatus
+  for (const message of orderedMessages) {
+    const messageStatusKey = getMessageStatusKey(message);
+    const previousStatus = previousStatusMap?.[messageStatusKey];
+    const deliveryStatus = resolveMessageDeliveryStatus(message, previousStatus?.deliveryStatus);
+    nextStatusMap[messageStatusKey] = {
+      deliveryStatus,
+      readStatus: null
     };
-  });
+
+    if (message.direction !== "outgoing" || deliveryStatus === "failed" || deliveryStatus === "sending") {
+      continue;
+    }
+
+    outgoingStatusIndex.set(messageStatusKey, readableOutgoingKeys.length);
+    readableOutgoingKeys.push(messageStatusKey);
+
+    if (
+      otherUserLastSeenAtTime !== null &&
+      message.createdAt &&
+      new Date(message.createdAt).getTime() <= otherUserLastSeenAtTime
+    ) {
+      lastReadMessageKey = messageStatusKey;
+    }
+  }
+
+  const lastReadOrder =
+    lastReadMessageKey !== null ? outgoingStatusIndex.get(lastReadMessageKey) ?? -1 : -1;
+
+  for (const messageStatusKey of readableOutgoingKeys) {
+    const status = nextStatusMap[messageStatusKey];
+    const currentOrder = outgoingStatusIndex.get(messageStatusKey);
+
+    if (!status || currentOrder === undefined) {
+      continue;
+    }
+
+    if (messageStatusKey === lastReadMessageKey) {
+      status.readStatus = "read";
+      continue;
+    }
+
+    if (currentOrder > lastReadOrder) {
+      status.readStatus = "unread";
+    }
+  }
+
+  return nextStatusMap;
+}
+
+function areMessageStatusMapsEqual(left: MessageStatusMap, right: MessageStatusMap) {
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+
+  if (leftKeys.length !== rightKeys.length) {
+    return false;
+  }
+
+  for (const key of leftKeys) {
+    const leftEntry = left[key];
+    const rightEntry = right[key];
+
+    if (!rightEntry) {
+      return false;
+    }
+
+    if (
+      leftEntry.deliveryStatus !== rightEntry.deliveryStatus ||
+      leftEntry.readStatus !== rightEntry.readStatus
+    ) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 function buildReactionSummaries(
@@ -199,20 +312,21 @@ function mapRealtimeMessages(params: {
   translationsByMessageId: Map<string, RealtimeTranslationRow>;
   reactionsByMessageId: Map<string, RealtimeReactionRow[]>;
   viewerId: string;
-  otherUserLastSeenAt: string | null;
 }): ChatMessage[] {
   const {
     fetchedMessages,
     translationsByMessageId,
     reactionsByMessageId,
-    viewerId,
-    otherUserLastSeenAt
+    viewerId
   } = params;
 
   const baseMessages = fetchedMessages.map((message) => {
     const outgoing = message.sender_id === viewerId;
     const translation = translationsByMessageId.get(message.id);
-    const displayText = translation?.translated_text ?? message.original_text;
+    const incomingDisplayText =
+      translation?.translated_text && translation.translated_text.trim().length > 0
+        ? translation.translated_text
+        : PENDING_TRANSLATION_PLACEHOLDER;
 
     return {
       id: message.id,
@@ -222,8 +336,8 @@ function mapRealtimeMessages(params: {
       direction: outgoing ? "outgoing" : "incoming",
       messageType: (message.message_kind as "text" | "image") ?? "text",
       originalText: message.original_text,
-      displayText: outgoing ? message.original_text : displayText,
-      body: outgoing ? message.original_text : displayText,
+      displayText: outgoing ? message.original_text : incomingDisplayText,
+      body: outgoing ? message.original_text : incomingDisplayText,
       originalBody: outgoing ? undefined : message.original_text,
       senderLanguage: message.original_language,
       targetLanguage: outgoing
@@ -238,42 +352,42 @@ function mapRealtimeMessages(params: {
       attachmentName: message.attachment_name ?? undefined,
       attachmentContentType: message.attachment_content_type ?? undefined,
       canRetry: outgoing,
-      deliveryStatus: outgoing ? ("sent" as const) : undefined,
-      readStatus: null,
       reactions: buildReactionSummaries(reactionsByMessageId.get(message.id) ?? [], viewerId)
     } satisfies ChatMessage;
   });
 
-  return applyReadStatuses(baseMessages, otherUserLastSeenAt);
+  return sortMessages(baseMessages);
 }
 
 function mergeServerMessages(params: {
   current: ChatMessage[];
   serverMessages: ChatMessage[];
-  otherUserLastSeenAt: string | null;
+  currentStatusMap: MessageStatusMap;
 }) {
-  const { current, serverMessages, otherUserLastSeenAt } = params;
+  const { current, serverMessages, currentStatusMap } = params;
   const serverIds = new Set(serverMessages.map((message) => message.id));
   const serverClientIds = new Set(
     serverMessages.map((message) => message.clientId).filter(Boolean) as string[]
   );
   const unsyncedLocalMessages = current.filter(
     (message) =>
-      (message.deliveryStatus === "sending" || message.deliveryStatus === "failed") &&
+      (() => {
+        const status = currentStatusMap[getMessageStatusKey(message)];
+        return status?.deliveryStatus === "sending" || status?.deliveryStatus === "failed";
+      })() &&
       !serverIds.has(message.id) &&
       (!message.clientId || !serverClientIds.has(message.clientId))
   );
 
-  return applyReadStatuses([...serverMessages, ...unsyncedLocalMessages], otherUserLastSeenAt);
+  return sortMessages([...serverMessages, ...unsyncedLocalMessages]);
 }
 
 async function hydrateFetchedMessages(params: {
   fetchedMessages: RealtimeMessageRow[];
-  otherUserLastSeenAt: string | null;
   supabase: any;
   viewerId: string;
 }) {
-  const { fetchedMessages, otherUserLastSeenAt, supabase, viewerId } = params;
+  const { fetchedMessages, supabase, viewerId } = params;
 
   if (fetchedMessages.length === 0) {
     return [] as ChatMessage[];
@@ -319,8 +433,7 @@ async function hydrateFetchedMessages(params: {
     fetchedMessages,
     translationsByMessageId,
     reactionsByMessageId,
-    viewerId,
-    otherUserLastSeenAt
+    viewerId
   });
 }
 
@@ -420,7 +533,6 @@ async function fetchInitialRoomMessageBatch(params: {
 
   const messages = await hydrateFetchedMessages({
     fetchedMessages: orderedRows,
-    otherUserLastSeenAt,
     supabase,
     viewerId
   });
@@ -454,12 +566,11 @@ async function fetchInitialRoomMessageBatch(params: {
 
 async function fetchOlderRoomMessageBatch(params: {
   beforeCreatedAt: string;
-  otherUserLastSeenAt: string | null;
   roomId: string;
   supabase: any;
   viewerId: string;
 }) {
-  const { beforeCreatedAt, otherUserLastSeenAt, roomId, supabase, viewerId } = params;
+  const { beforeCreatedAt, roomId, supabase, viewerId } = params;
 
   const { data: fetchedOlderMessages, error: olderMessagesError } = await supabase
     .from("messages")
@@ -486,7 +597,6 @@ async function fetchOlderRoomMessageBatch(params: {
 
   const messages = await hydrateFetchedMessages({
     fetchedMessages: orderedRows,
-    otherUserLastSeenAt,
     supabase,
     viewerId
   });
@@ -560,7 +670,33 @@ export function ChatRoomRealtime({
   const [otherUserLastSeenAt, setOtherUserLastSeenAt] = useState<string | null>(
     () => cachedRoomEntrySnapshot?.otherUserLastSeenAt ?? null
   );
+  const [bufferedOtherUserLastSeenAt, setBufferedOtherUserLastSeenAt] = useState<string | null>(
+    () => cachedRoomEntrySnapshot?.otherUserLastSeenAt ?? null
+  );
+  const [messageStatusMap, setMessageStatusMap] = useState<MessageStatusMap>(() =>
+    buildMessageStatusMap({
+      messages: seededMessages,
+      otherUserLastSeenAt: cachedRoomEntrySnapshot?.otherUserLastSeenAt ?? null
+    })
+  );
+  const messageStatusMapRef = useRef<MessageStatusMap>(
+    buildMessageStatusMap({
+      messages: seededMessages,
+      otherUserLastSeenAt: cachedRoomEntrySnapshot?.otherUserLastSeenAt ?? null
+    })
+  );
+  const [isRealtimeReady, setIsRealtimeReady] = useState(false);
+  const messagesRef = useRef<ChatMessage[]>(seededMessages);
   const messageIdsRef = useRef<Set<string>>(new Set(messages.map((message) => message.id)));
+  const otherUserLastSeenAtRef = useRef<string | null>(
+    cachedRoomEntrySnapshot?.otherUserLastSeenAt ?? null
+  );
+  const deferredReadRafRef = useRef<number | null>(null);
+  const deferredReadTimeoutRef = useRef<number | null>(null);
+  const statusPatchTimerRef = useRef<number | null>(null);
+  const pendingStatusPatchRef = useRef<MessageStatusPatchMap>({});
+  const initializedRoomEntryKeyRef = useRef<string | null>(null);
+  const summaryPrewarmRoomEntryKeyRef = useRef<string | null>(null);
   const pendingOptimisticCommitRef = useRef<{
     messageId: string;
     startedAt: number;
@@ -618,12 +754,131 @@ export function ChatRoomRealtime({
       return;
     }
 
+    const { error: summaryError } = await supabase
+      .from("chat_room_summaries")
+      .update({
+        unread_count: 0
+      })
+      .eq("room_id", room.id)
+      .eq("user_id", viewerId);
+
+    if (summaryError) {
+      const summaryErrorMessage = String(summaryError.message ?? "").toLowerCase();
+      const missingSummaryTable =
+        summaryErrorMessage.includes("chat_room_summaries") &&
+        (summaryErrorMessage.includes("does not exist") ||
+          summaryErrorMessage.includes("could not find the table") ||
+          summaryErrorMessage.includes("could not find relation"));
+
+      if (!missingSummaryTable) {
+        console.error("Failed to patch chat_room_summaries unread_count:", summaryError);
+      }
+    }
+
     patchCachedChatPreview(room.id, (preview) => ({
       ...preview,
       unreadCount: 0,
       viewerLastSeenAt: nowIso
     }));
   }, [room.id, supabase, viewerId]);
+
+  const flushMessageStatusPatch = useCallback(() => {
+    const pendingPatch = pendingStatusPatchRef.current;
+
+    if (Object.keys(pendingPatch).length === 0) {
+      return;
+    }
+
+    pendingStatusPatchRef.current = {};
+    if (statusPatchTimerRef.current !== null && typeof window !== "undefined") {
+      window.clearTimeout(statusPatchTimerRef.current);
+      statusPatchTimerRef.current = null;
+    }
+
+    setMessageStatusMap((current) => {
+      let hasChanges = false;
+      const next: MessageStatusMap = { ...current };
+
+      for (const [statusKey, patch] of Object.entries(pendingPatch)) {
+        const currentEntry = current[statusKey] ?? {
+          deliveryStatus: "sent",
+          readStatus: null
+        };
+        const nextEntry: MessageStatusEntry = {
+          deliveryStatus: patch.deliveryStatus ?? currentEntry.deliveryStatus,
+          readStatus: patch.readStatus ?? currentEntry.readStatus
+        };
+
+        if (
+          nextEntry.deliveryStatus !== currentEntry.deliveryStatus ||
+          nextEntry.readStatus !== currentEntry.readStatus
+        ) {
+          next[statusKey] = nextEntry;
+          hasChanges = true;
+        }
+      }
+
+      return hasChanges ? next : current;
+    });
+  }, []);
+
+  const queueMessageStatusPatch = useCallback(
+    (patch: MessageStatusPatchMap, options?: { immediate?: boolean }) => {
+      pendingStatusPatchRef.current = {
+        ...pendingStatusPatchRef.current,
+        ...patch
+      };
+
+      if (options?.immediate || typeof window === "undefined") {
+        flushMessageStatusPatch();
+        return;
+      }
+
+      if (statusPatchTimerRef.current !== null) {
+        window.clearTimeout(statusPatchTimerRef.current);
+      }
+
+      statusPatchTimerRef.current = window.setTimeout(() => {
+        statusPatchTimerRef.current = null;
+        flushMessageStatusPatch();
+      }, MESSAGE_STATUS_PATCH_BUFFER_MS);
+    },
+    [flushMessageStatusPatch]
+  );
+
+  const cancelDeferredReadUpdate = useCallback(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (deferredReadRafRef.current !== null) {
+      window.cancelAnimationFrame(deferredReadRafRef.current);
+      deferredReadRafRef.current = null;
+    }
+
+    if (deferredReadTimeoutRef.current !== null) {
+      window.clearTimeout(deferredReadTimeoutRef.current);
+      deferredReadTimeoutRef.current = null;
+    }
+  }, []);
+
+  const queueDeferredReadUpdate = useCallback(() => {
+    if (typeof window === "undefined") {
+      void updateViewerLastSeen();
+      return;
+    }
+
+    cancelDeferredReadUpdate();
+    deferredReadRafRef.current = window.requestAnimationFrame(() => {
+      deferredReadRafRef.current = window.requestAnimationFrame(() => {
+        deferredReadRafRef.current = null;
+        deferredReadTimeoutRef.current = window.setTimeout(() => {
+          deferredReadTimeoutRef.current = null;
+          void updateViewerLastSeen();
+        }, 0);
+      });
+    });
+  }, [cancelDeferredReadUpdate, updateViewerLastSeen]);
 
   const syncChatPreviewCache = useCallback(
     (params: {
@@ -663,20 +918,91 @@ export function ChatRoomRealtime({
     [room.id]
   );
 
+  const prewarmChatSummariesForHomeReturn = useCallback(async () => {
+    const { data: summaryRows, error: summaryError } = (await supabase
+      .from("chat_room_summaries")
+      .select(
+        "room_id, peer_user_id, peer_display_name_snapshot, peer_avatar_snapshot, last_message_id, last_message_preview, last_message_created_at, unread_count, updated_at"
+      )
+      .eq("user_id", viewerId)
+      .order("updated_at", { ascending: false })
+      .limit(HOME_CACHE_PREWARM_SUMMARY_LIMIT)) as {
+      data: ChatRoomSummaryCacheRow[] | null;
+      error: { message?: string } | null;
+    };
+
+    if (summaryError) {
+      const summaryErrorMessage = String(summaryError.message ?? "").toLowerCase();
+      const missingSummaryTable =
+        summaryErrorMessage.includes("chat_room_summaries") &&
+        (summaryErrorMessage.includes("does not exist") ||
+          summaryErrorMessage.includes("could not find the table") ||
+          summaryErrorMessage.includes("could not find relation"));
+
+      if (!missingSummaryTable) {
+        console.error("chat summary prewarm failed", {
+          roomId: room.id,
+          viewerId,
+          summaryError
+        });
+      }
+      return;
+    }
+
+    const summaryPreviews = (summaryRows ?? []).map((summaryRow, index) => {
+      const latestMessageCreatedAt =
+        summaryRow.last_message_created_at ?? summaryRow.updated_at ?? undefined;
+
+      return {
+        id: `chat-preview-${summaryRow.room_id}`,
+        roomId: summaryRow.room_id,
+        peerUserId: summaryRow.peer_user_id ?? undefined,
+        recipientName:
+          summaryRow.peer_display_name_snapshot?.trim() || "Untitled chat",
+        recipientAvatarUrl: summaryRow.peer_avatar_snapshot ?? undefined,
+        latestMessagePreview:
+          summaryRow.last_message_preview?.trim() || "No messages yet.",
+        latestMessageAt: latestMessageCreatedAt
+          ? formatChatTimestamp(latestMessageCreatedAt)
+          : "Just now",
+        latestMessageCreatedAt,
+        lastMessageId: summaryRow.last_message_id ?? undefined,
+        unreadCount: Math.max(0, summaryRow.unread_count ?? 0),
+        selected: index === 0
+      };
+    });
+
+    if (summaryPreviews.length === 0) {
+      return;
+    }
+
+    const mergedPreviews = mergeChatPreviews(getCachedChatPreviews(), summaryPreviews);
+    setCachedChatPreviews(mergedPreviews);
+
+    console.log("chat summary prewarm complete", {
+      roomId: room.id,
+      viewerId,
+      summaryPreviewCount: summaryPreviews.length,
+      mergedPreviewCount: mergedPreviews.length
+    });
+  }, [room.id, supabase, viewerId]);
+
   const loadInitialRoomState = useCallback(async () => {
     if (hasSeededMessages || preferImmediateEntry) {
       setIsRoomRefreshing(true);
     } else {
       setIsInitialRoomLoading(true);
     }
+    setIsRealtimeReady(false);
 
     try {
-      const batch = await fetchInitialRoomMessageBatch({
+      const batch = await fetchInitialRoomMessageBatchWithDedupe({
         roomId: room.id,
         supabase,
         viewerId
       });
 
+      otherUserLastSeenAtRef.current = batch.otherUserLastSeenAt;
       setOtherUserLastSeenAt(batch.otherUserLastSeenAt);
       setInitialScrollTargetMessageId(batch.firstUnreadMessageId);
       setHasResolvedInitialScrollTarget(true);
@@ -686,14 +1012,16 @@ export function ChatRoomRealtime({
         mergeServerMessages({
           current,
           serverMessages: batch.messages,
-          otherUserLastSeenAt: batch.otherUserLastSeenAt
+          currentStatusMap: messageStatusMapRef.current
         })
       );
-      void updateViewerLastSeen();
+      setIsRealtimeReady(true);
+      queueDeferredReadUpdate();
     } catch (error) {
       console.error("Failed to load initial room state:", error);
       setInitialScrollTargetMessageId(null);
       setHasResolvedInitialScrollTarget(true);
+      setIsRealtimeReady(true);
     } finally {
       setIsInitialRoomLoading(false);
       setIsRoomRefreshing(false);
@@ -701,9 +1029,9 @@ export function ChatRoomRealtime({
   }, [
     hasSeededMessages,
     preferImmediateEntry,
+    queueDeferredReadUpdate,
     room.id,
     supabase,
-    updateViewerLastSeen,
     viewerId
   ]);
 
@@ -724,7 +1052,6 @@ export function ChatRoomRealtime({
     try {
       const batch = await fetchOlderRoomMessageBatch({
         beforeCreatedAt,
-        otherUserLastSeenAt,
         roomId: room.id,
         supabase,
         viewerId
@@ -744,7 +1071,7 @@ export function ChatRoomRealtime({
           return current;
         }
 
-        return applyReadStatuses([...uniqueOlderMessages, ...current], otherUserLastSeenAt);
+        return sortMessages([...uniqueOlderMessages, ...current]);
       });
     } catch (error) {
       console.error("Failed to load older room messages:", error);
@@ -755,7 +1082,6 @@ export function ChatRoomRealtime({
     hasOlderMessages,
     isOlderMessagesLoading,
     messages,
-    otherUserLastSeenAt,
     room.id,
     supabase,
     viewerId
@@ -779,6 +1105,21 @@ export function ChatRoomRealtime({
         messageId: optimisticMessage.id,
         startedAt: performance.now()
       };
+      const optimisticStatusKey = optimisticMessage.clientId ?? optimisticMessage.id;
+
+      queueMessageStatusPatch(
+        {
+          [optimisticMessage.id]: {
+            deliveryStatus: "sending",
+            readStatus: null
+          },
+          [optimisticStatusKey]: {
+            deliveryStatus: "sending",
+            readStatus: null
+          }
+        },
+        { immediate: true }
+      );
 
       setMessages((current) => [
         ...current,
@@ -801,13 +1142,11 @@ export function ChatRoomRealtime({
           attachmentName: optimisticMessage.attachmentName,
           attachmentContentType: optimisticMessage.attachmentContentType,
           canRetry: optimisticMessage.canRetry ?? true,
-          deliveryStatus: "sending",
-          readStatus: null,
           reactions: []
         }
       ]);
     },
-    [room.id, viewerId]
+    [queueMessageStatusPatch, room.id, viewerId]
   );
 
   const handleSendSucceeded = useCallback(
@@ -826,6 +1165,18 @@ export function ChatRoomRealtime({
         createdAt: string;
       }
     ) => {
+      const statusKey = message.clientId ?? tempId;
+      queueMessageStatusPatch({
+        [tempId]: {
+          deliveryStatus: "sent",
+          readStatus: null
+        },
+        [statusKey]: {
+          deliveryStatus: "sent",
+          readStatus: null
+        }
+      });
+
       setMessages((current) =>
         current.map((item) =>
           item.id === tempId || (!!message.clientId && item.clientId === message.clientId)
@@ -846,8 +1197,7 @@ export function ChatRoomRealtime({
                 attachmentName: message.attachmentName ?? item.attachmentName,
                 attachmentContentType:
                   message.attachmentContentType ?? item.attachmentContentType,
-                deliveryStatus: "sent",
-                readStatus: item.readStatus ?? null
+                canRetry: item.canRetry ?? true
               }
             : item
         )
@@ -861,22 +1211,20 @@ export function ChatRoomRealtime({
         createdAt: message.createdAt
       });
     },
-    [syncChatPreviewCache]
+    [queueMessageStatusPatch, syncChatPreviewCache]
   );
 
   const handleSendFailed = useCallback((tempId: string) => {
-    setMessages((current) =>
-      current.map((message) =>
-        message.id === tempId
-          ? {
-              ...message,
-              deliveryStatus: "failed",
-              readStatus: null
-            }
-          : message
-      )
-      );
-  }, []);
+    queueMessageStatusPatch(
+      {
+        [tempId]: {
+          deliveryStatus: "failed",
+          readStatus: null
+        }
+      },
+      { immediate: true }
+    );
+  }, [queueMessageStatusPatch]);
 
   const sendTextMessage = useCallback(
     async (rawText: string) => {
@@ -923,7 +1271,7 @@ export function ChatRoomRealtime({
 
   const handleRetryMessage = useCallback(
     async (messageId: string) => {
-      const failedMessage = messages.find((message) => message.id === messageId);
+      const failedMessage = messagesRef.current.find((message) => message.id === messageId);
 
       if (
         !failedMessage ||
@@ -946,15 +1294,28 @@ export function ChatRoomRealtime({
         (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
           ? crypto.randomUUID()
           : `client-${Date.now()}`);
+      const previousStatusKey = getMessageStatusKey(failedMessage);
+
+      queueMessageStatusPatch(
+        {
+          [previousStatusKey]: {
+            deliveryStatus: "sending",
+            readStatus: null
+          },
+          [clientId]: {
+            deliveryStatus: "sending",
+            readStatus: null
+          }
+        },
+        { immediate: true }
+      );
 
       setMessages((current) =>
         current.map((message) =>
           message.id === messageId
             ? {
                 ...message,
-                clientId,
-                deliveryStatus: "sending",
-                readStatus: null
+                clientId
               }
             : message
         )
@@ -969,16 +1330,18 @@ export function ChatRoomRealtime({
       const result = await sendMessageAction(initialSendMessageFormState, formData);
 
       if (result.error) {
-        setMessages((current) =>
-          current.map((message) =>
-            message.id === messageId
-              ? {
-                  ...message,
-                  deliveryStatus: "failed",
-                  readStatus: null
-                }
-              : message
-          )
+        queueMessageStatusPatch(
+          {
+            [clientId]: {
+              deliveryStatus: "failed",
+              readStatus: null
+            },
+            [messageId]: {
+              deliveryStatus: "failed",
+              readStatus: null
+            }
+          },
+          { immediate: true }
         );
         return;
       }
@@ -986,6 +1349,18 @@ export function ChatRoomRealtime({
       if (!result.message) {
         return;
       }
+
+      const resolvedStatusKey = result.message.clientId ?? result.message.id;
+      queueMessageStatusPatch({
+        [clientId]: {
+          deliveryStatus: "sent",
+          readStatus: null
+        },
+        [resolvedStatusKey]: {
+          deliveryStatus: "sent",
+          readStatus: null
+        }
+      });
 
       setMessages((current) =>
         current.map((message) =>
@@ -1005,8 +1380,9 @@ export function ChatRoomRealtime({
                   message.targetLanguage,
                 language: result.message?.originalLanguage ?? message.language,
                 createdAt: result.message?.createdAt ?? message.createdAt,
-                timestamp: formatChatTimestamp(result.message?.createdAt ?? message.createdAt ?? new Date().toISOString()),
-                deliveryStatus: "sent"
+                timestamp: formatChatTimestamp(
+                  result.message?.createdAt ?? message.createdAt ?? new Date().toISOString()
+                )
               }
             : message
         )
@@ -1020,12 +1396,12 @@ export function ChatRoomRealtime({
         createdAt: result.message.createdAt
       });
     },
-    [locale, messages, room.id, syncChatPreviewCache]
+    [locale, queueMessageStatusPatch, room.id, syncChatPreviewCache]
   );
 
   const handleToggleReaction = useCallback(
     async (messageId: string, emoji: string) => {
-      const message = messages.find((item) => item.id === messageId);
+      const message = messagesRef.current.find((item) => item.id === messageId);
 
       if (!message || message.direction !== "incoming") {
         return;
@@ -1062,10 +1438,11 @@ export function ChatRoomRealtime({
 
       await refreshReactions([messageId]);
     },
-    [messages, refreshReactions, supabase, viewerId]
+    [refreshReactions, supabase, viewerId]
   );
 
   useEffect(() => {
+    messagesRef.current = messages;
     messageIdsRef.current = new Set(messages.map((message) => message.id));
     setCachedRoomMessages(room.id, messages);
     setCachedRoomEntrySnapshot(room.id, {
@@ -1076,6 +1453,40 @@ export function ChatRoomRealtime({
       preloadedAt: Date.now()
     });
   }, [hasOlderMessages, initialScrollTargetMessageId, messages, otherUserLastSeenAt, room.id]);
+
+  useEffect(() => {
+    otherUserLastSeenAtRef.current = otherUserLastSeenAt;
+  }, [otherUserLastSeenAt]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      setBufferedOtherUserLastSeenAt(otherUserLastSeenAt);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setBufferedOtherUserLastSeenAt(otherUserLastSeenAt);
+    }, MESSAGE_STATUS_PATCH_BUFFER_MS);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [otherUserLastSeenAt]);
+
+  useEffect(() => {
+    setMessageStatusMap((current) => {
+      const next = buildMessageStatusMap({
+        messages,
+        otherUserLastSeenAt: bufferedOtherUserLastSeenAt,
+        previousStatusMap: current
+      });
+      return areMessageStatusMapsEqual(current, next) ? current : next;
+    });
+  }, [bufferedOtherUserLastSeenAt, messages]);
+
+  useEffect(() => {
+    messageStatusMapRef.current = messageStatusMap;
+  }, [messageStatusMap]);
 
   useEffect(() => {
     recordRecentChatRoom(room.id);
@@ -1106,10 +1517,48 @@ export function ChatRoomRealtime({
   }, [messages, room.id]);
 
   useEffect(() => {
+    const roomEntryKey = getRoomEntryKey(room.id, viewerId);
+
+    if (initializedRoomEntryKeyRef.current === roomEntryKey) {
+      return;
+    }
+
+    initializedRoomEntryKeyRef.current = roomEntryKey;
     void loadInitialRoomState();
-  }, [loadInitialRoomState]);
+  }, [loadInitialRoomState, room.id, viewerId]);
 
   useEffect(() => {
+    if (!isRealtimeReady) {
+      return;
+    }
+
+    const roomEntryKey = getRoomEntryKey(room.id, viewerId);
+
+    if (summaryPrewarmRoomEntryKeyRef.current === roomEntryKey) {
+      return;
+    }
+
+    summaryPrewarmRoomEntryKeyRef.current = roomEntryKey;
+
+    if (typeof window === "undefined") {
+      void prewarmChatSummariesForHomeReturn();
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      void prewarmChatSummariesForHomeReturn();
+    }, ROOM_ENTRY_SUMMARY_PREWARM_DELAY_MS);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [isRealtimeReady, prewarmChatSummariesForHomeReturn, room.id, viewerId]);
+
+  useEffect(() => {
+    if (!isRealtimeReady) {
+      return;
+    }
+
     const channel = supabase.channel(`chat-room:${room.id}:${viewerId}`);
 
     channel
@@ -1130,14 +1579,15 @@ export function ChatRoomRealtime({
 
           setMessages((current) => {
             if (current.some((message) => message.id === row.id)) {
-              return applyReadStatuses(current, otherUserLastSeenAt);
+              return current;
             }
 
             const matchingTemp =
               row.client_message_id != null
                 ? current.find(
                     (message) =>
-                      message.deliveryStatus === "sending" &&
+                      messageStatusMapRef.current[getMessageStatusKey(message)]?.deliveryStatus ===
+                        "sending" &&
                       message.direction === "outgoing" &&
                       message.clientId === row.client_message_id
                   )
@@ -1166,8 +1616,7 @@ export function ChatRoomRealtime({
                       imageUrl: row.attachment_url ?? message.imageUrl,
                       attachmentName: row.attachment_name ?? message.attachmentName,
                       attachmentContentType:
-                        row.attachment_content_type ?? message.attachmentContentType,
-                      deliveryStatus: "sent"
+                        row.attachment_content_type ?? message.attachmentContentType
                     }
                   : message
               );
@@ -1182,8 +1631,14 @@ export function ChatRoomRealtime({
                   direction: row.sender_id === viewerId ? "outgoing" : "incoming",
                   messageType: (row.message_kind as "text" | "image") ?? "text",
                   originalText: row.original_text,
-                  displayText: row.original_text,
-                  body: row.original_text,
+                  displayText:
+                    row.sender_id === viewerId || row.message_kind === "image"
+                      ? row.original_text
+                      : PENDING_TRANSLATION_PLACEHOLDER,
+                  body:
+                    row.sender_id === viewerId || row.message_kind === "image"
+                      ? row.original_text
+                      : PENDING_TRANSLATION_PLACEHOLDER,
                   originalBody: row.sender_id === viewerId ? undefined : row.original_text,
                   senderLanguage: row.original_language,
                   targetLanguage: row.original_language,
@@ -1194,15 +1649,31 @@ export function ChatRoomRealtime({
                   attachmentName: row.attachment_name ?? undefined,
                   attachmentContentType: row.attachment_content_type ?? undefined,
                   canRetry: row.sender_id === viewerId,
-                  deliveryStatus: row.sender_id === viewerId ? "sent" : undefined,
-                  readStatus: null,
                   reactions: []
                 }
               ];
             }
 
-            return applyReadStatuses(nextMessages, otherUserLastSeenAt);
+            return nextMessages;
           });
+
+          if (row.sender_id === viewerId) {
+            const sentStatusPatch: MessageStatusPatchMap = {
+              [row.id]: {
+                deliveryStatus: "sent",
+                readStatus: null
+              }
+            };
+
+            if (row.client_message_id) {
+              sentStatusPatch[row.client_message_id] = {
+                deliveryStatus: "sent",
+                readStatus: null
+              };
+            }
+
+            queueMessageStatusPatch(sentStatusPatch);
+          }
 
           syncChatPreviewCache({
             debugReason:
@@ -1255,8 +1726,8 @@ export function ChatRoomRealtime({
             return;
           }
 
+          otherUserLastSeenAtRef.current = updatedRow.last_seen_at;
           setOtherUserLastSeenAt(updatedRow.last_seen_at);
-          setMessages((current) => applyReadStatuses(current, updatedRow.last_seen_at));
         }
       )
       .on(
@@ -1307,7 +1778,8 @@ export function ChatRoomRealtime({
       void supabase.removeChannel(channel);
     };
   }, [
-    otherUserLastSeenAt,
+    isRealtimeReady,
+    queueMessageStatusPatch,
     refreshReactions,
     room.id,
     syncChatPreviewCache,
@@ -1316,10 +1788,23 @@ export function ChatRoomRealtime({
     viewerId
   ]);
 
+  useEffect(
+    () => () => {
+      cancelDeferredReadUpdate();
+      if (statusPatchTimerRef.current !== null && typeof window !== "undefined") {
+        window.clearTimeout(statusPatchTimerRef.current);
+        statusPatchTimerRef.current = null;
+      }
+      pendingStatusPatchRef.current = {};
+    },
+    [cancelDeferredReadUpdate]
+  );
+
   return (
     <ChatRoom
       room={room}
       messages={messages}
+      messageStatusMap={messageStatusMap}
       connectionState={connectionState}
       hasOlderMessages={hasOlderMessages}
       hasRecentMessages={hasRecentMessages}

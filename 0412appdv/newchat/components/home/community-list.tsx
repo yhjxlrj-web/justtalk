@@ -111,10 +111,13 @@ function CommunityHeartButton({
   receiverUserId: string;
 }) {
   const locale = useCurrentLocale();
+  const dictionary = useDictionary();
   const copy = getUiCopy(locale);
   const duplicateNoticeTimeoutRef = useRef<number | null>(null);
+  const handledSuccessKeyRef = useRef<string | null>(null);
   const [showAlreadySentNotice, setShowAlreadySentNotice] = useState(false);
   const [optimisticSent, setOptimisticSent] = useState(alreadySent);
+  const [isLocallyPending, setIsLocallyPending] = useState(false);
   const [state, formAction, isPending] = useActionState(
     sendCommunityHeartAction,
     initialCommunityHeartActionState
@@ -124,6 +127,7 @@ function CommunityHeartButton({
   useEffect(() => {
     if (alreadySent) {
       setOptimisticSent(true);
+      setIsLocallyPending(false);
     }
   }, [alreadySent]);
 
@@ -147,15 +151,27 @@ function CommunityHeartButton({
       return;
     }
 
+    const successKey = `${state.receiverUserId}:${state.notificationId ?? "existing"}`;
+
+    if (handledSuccessKeyRef.current === successKey) {
+      return;
+    }
+
+    handledSuccessKeyRef.current = successKey;
+    setIsLocallyPending(false);
+    setOptimisticSent(true);
+    onHeartSent(state.receiverUserId);
+
     console.log("community heart success", {
       receiverUserId: state.receiverUserId,
       notificationId: state.notificationId ?? null,
       alreadySent: state.alreadySent ?? false
     });
-  }, [state?.alreadySent, state?.notificationId, state?.receiverUserId, state?.success]);
+  }, [onHeartSent, state?.alreadySent, state?.notificationId, state?.receiverUserId, state?.success]);
 
   useEffect(() => {
     if (state?.error) {
+      setIsLocallyPending(false);
       console.error("community heart action failed", {
         receiverUserId,
         error: state.error
@@ -203,19 +219,18 @@ function CommunityHeartButton({
           receiverUserId,
           alreadySent: hasSentHeart
         });
-        setOptimisticSent(true);
-        onHeartSent(receiverUserId);
+        setIsLocallyPending(true);
       }}
     >
       <input type="hidden" name="receiverUserId" value={receiverUserId} />
       <SecondaryButton
         type="submit"
         className="h-10 w-full gap-1.5 rounded-[14px] px-3 text-[12px] font-semibold"
-        disabled={isPending || hasSentHeart}
+        disabled={isPending || isLocallyPending || hasSentHeart}
         aria-label={state?.error ?? copy.friendList.communityHeartAction}
       >
         <Heart className="h-3.5 w-3.5 shrink-0" />
-        <span>{copy.friendList.communityHeartAction}</span>
+        <span>{isPending || isLocallyPending ? dictionary.sending : copy.friendList.communityHeartAction}</span>
       </SecondaryButton>
     </form>
   );
@@ -247,6 +262,7 @@ function CommunityRequestButton({
   const copy = getUiCopy(locale);
   const handledRequestKeyRef = useRef<string | null>(null);
   const [optimisticRequested, setOptimisticRequested] = useState(false);
+  const [isLocallyPending, setIsLocallyPending] = useState(false);
   const [state, formAction, isPending] = useActionState(
     createFriendRequestByUserIdAction,
     initialCreateFriendRequestFormState
@@ -254,12 +270,14 @@ function CommunityRequestButton({
   const wrapperClassName = formClassName ?? "flex-1";
   const resolvedButtonClassName =
     buttonClassName ?? "h-10 w-full gap-1.5 rounded-[14px] px-3 text-[12px] font-semibold";
+  const isButtonPending = isPending || isLocallyPending;
   const effectiveRelationshipState: CommunityRelationshipState =
     relationshipState === "none" && optimisticRequested ? "sent" : relationshipState;
 
   useEffect(() => {
     if (relationshipState !== "none") {
       setOptimisticRequested(false);
+      setIsLocallyPending(false);
     }
   }, [relationshipState]);
 
@@ -275,6 +293,8 @@ function CommunityRequestButton({
     }
 
     handledRequestKeyRef.current = handledKey;
+    setIsLocallyPending(false);
+    setOptimisticRequested(true);
 
     onRequestSent({
       friendshipId: state.friendshipId,
@@ -282,6 +302,15 @@ function CommunityRequestButton({
       profile
     });
   }, [onRequestSent, profile, state?.friendshipId, state?.otherUserId, state?.successMessage]);
+
+  useEffect(() => {
+    if (!state?.errors.form && !state?.errors.email) {
+      return;
+    }
+
+    setIsLocallyPending(false);
+    setOptimisticRequested(false);
+  }, [state?.errors.email, state?.errors.form]);
 
   if (effectiveRelationshipState === "sent") {
     return (
@@ -337,12 +366,7 @@ function CommunityRequestButton({
           otherUserId: profile.id,
           relationshipState: effectiveRelationshipState
         });
-        setOptimisticRequested(true);
-        onRequestSent({
-          friendshipId: `optimistic-request:${profile.id}`,
-          otherUserId: profile.id,
-          profile
-        });
+        setIsLocallyPending(true);
       }}
     >
       <input type="hidden" name="otherUserId" value={profile.id} />
@@ -350,12 +374,12 @@ function CommunityRequestButton({
         type="submit"
         className={resolvedButtonClassName}
         disablePressEffect={disablePressEffect}
-        disabled={isPending}
+        disabled={isButtonPending}
         aria-label={state?.errors.form ?? copy.friendList.communityRequestAction}
       >
         <MessageCircle className="h-3.5 w-3.5 shrink-0 stroke-[2.25]" />
         <span className="truncate">
-          {isPending ? loadingLabel ?? dictionary.sending : copy.friendList.communityRequestAction}
+          {isButtonPending ? loadingLabel ?? dictionary.sending : copy.friendList.communityRequestAction}
         </span>
       </PrimaryButton>
     </form>
@@ -825,6 +849,7 @@ export function CommunityList({
                 type="button"
                 aria-label="Close community notifications"
                 className="absolute inset-0"
+                data-android-back-close="true"
                 onClick={() => setIsNotificationsOpen(false)}
               />
               <div

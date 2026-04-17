@@ -6,6 +6,7 @@ import { getAuthMessages } from "@/lib/i18n/auth-messages";
 import { resolveAuthLocale } from "@/lib/i18n/auth-locale";
 import { setServerAuthLocale } from "@/lib/i18n/auth-locale-server";
 import { resolveLocale } from "@/lib/i18n/get-dictionary";
+import { syncPeerSnapshotAcrossChatSummaries } from "@/lib/chats/room-summary";
 import type { ProfileSetupFormState } from "@/lib/profile/action-state";
 import { getUserProfile, mapProfileRowToUserProfile } from "@/lib/profile/profile";
 import { createSupabaseActionClient } from "@/lib/supabase/server";
@@ -179,6 +180,13 @@ async function persistProfile(params: {
       }
     };
   }
+
+  await syncPeerSnapshotAcrossChatSummaries({
+    userId: user.id,
+    displayName: profileRow.display_name ?? name,
+    avatarUrl: profileRow.avatar_url ?? avatarUrl ?? null,
+    preferredLanguage: profileRow.preferred_language ?? language
+  });
 
   return {
     profile: mapProfileRowToUserProfile(profileRow)

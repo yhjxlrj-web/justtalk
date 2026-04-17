@@ -7,6 +7,13 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseActionClient } from "@/lib/supabase/server";
 import { sendMessage } from "@/lib/messages/messages";
 
+const MAX_CHAT_IMAGE_UPLOAD_BYTES = 8 * 1024 * 1024;
+const IMAGE_TOO_LARGE_ERROR = {
+  en: "Image is too large to upload. Please choose a smaller photo.",
+  es: "La imagen es demasiado grande. Elige una foto mas pequena.",
+  ko: "이미지가 너무 커서 업로드할 수 없어요. 더 작은 사진을 선택해 주세요."
+} as const;
+
 function sanitizeFileName(fileName: string) {
   return fileName.replace(/[^a-zA-Z0-9.-]/g, "-").toLowerCase();
 }
@@ -91,6 +98,11 @@ export async function sendMessageAction(
 export async function sendImageMessageAction(formData: FormData): Promise<SendMessageFormState> {
   const chatId = String(formData.get("chatId") ?? "").trim();
   const clientMessageId = String(formData.get("clientMessageId") ?? "").trim();
+  const locale = String(formData.get("locale") ?? "").trim();
+  const normalizedLocale = locale.toLowerCase();
+  const dictionary = getDictionary(locale);
+  const localeCode =
+    normalizedLocale.startsWith("ko") ? "ko" : normalizedLocale.startsWith("es") ? "es" : "en";
   const fileValue = formData.get("image");
   const imageFile = fileValue instanceof File ? fileValue : null;
 
@@ -104,6 +116,10 @@ export async function sendImageMessageAction(formData: FormData): Promise<SendMe
 
   if (!imageFile.type.startsWith("image/")) {
     return { error: "Only image files can be sent here." };
+  }
+
+  if (imageFile.size > MAX_CHAT_IMAGE_UPLOAD_BYTES) {
+    return { error: IMAGE_TOO_LARGE_ERROR[localeCode] };
   }
 
   const client = await createSupabaseActionClient();
@@ -131,7 +147,7 @@ export async function sendImageMessageAction(formData: FormData): Promise<SendMe
 
     if (uploadError) {
       return {
-        error: uploadError.message ?? "We couldn't upload your image. Please try again."
+        error: uploadError.message ?? dictionary.failedToSend
       };
     }
 
@@ -161,7 +177,7 @@ export async function sendImageMessageAction(formData: FormData): Promise<SendMe
       error:
         error instanceof Error
           ? error.message
-          : "We couldn't send your image. Please try again."
+          : dictionary.failedToSend
     };
   }
 }

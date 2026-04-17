@@ -18,6 +18,7 @@ export function ChatRoom({
   isOlderMessagesLoading = false,
   isRoomRefreshing = false,
   initialScrollTargetMessageId = null,
+  messageStatusMap = {},
   messages,
   onDeleteHistory,
   onLoadOlderMessages,
@@ -38,6 +39,13 @@ export function ChatRoom({
   isOlderMessagesLoading?: boolean;
   isRoomRefreshing?: boolean;
   initialScrollTargetMessageId?: string | null;
+  messageStatusMap?: Record<
+    string,
+    {
+      deliveryStatus: "sending" | "sent" | "failed";
+      readStatus: "read" | "unread" | null;
+    }
+  >;
   room: ChatRoomSummary;
   messages: ChatMessage[];
   suppressInitialSkeleton?: boolean;
@@ -304,6 +312,13 @@ export function ChatRoom({
                 {(() => {
                   const prevMessage = messages[index - 1];
                   const nextMessage = messages[index + 1];
+                  const messageStatusKey = message.clientId ?? message.id;
+                  const currentMessageStatus = messageStatusMap[messageStatusKey];
+                  const deliveryStatus =
+                    currentMessageStatus?.deliveryStatus ??
+                    message.deliveryStatus ??
+                    (message.direction === "outgoing" ? "sent" : undefined);
+                  const readStatus = currentMessageStatus?.readStatus ?? message.readStatus ?? null;
                   const senderKey = message.senderId ?? message.direction;
                   const prevSenderKey = prevMessage?.senderId ?? prevMessage?.direction;
                   const nextSenderKey = nextMessage?.senderId ?? nextMessage?.direction;
@@ -319,11 +334,11 @@ export function ChatRoom({
                       showTimestamp={showTimestamp}
                       footerText={
                         message.direction === "outgoing" && showTimestamp
-                          ? message.deliveryStatus === "sending"
+                          ? deliveryStatus === "sending"
                             ? dictionary.sending
-                            : message.deliveryStatus === "failed"
+                            : deliveryStatus === "failed"
                               ? dictionary.failedToSend
-                              : message.readStatus === "read"
+                              : readStatus === "read"
                               ? dictionary.read
                               : dictionary.unread
                           : null

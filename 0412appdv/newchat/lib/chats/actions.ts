@@ -6,6 +6,7 @@ import type {
   LeaveChatRoomState,
   OpenDirectChatState
 } from "@/lib/chats/action-state";
+import { resetChatRoomSummariesForRoom } from "@/lib/chats/room-summary";
 import { findOrCreateDirectChat } from "@/lib/chats/chats";
 import { getFriendshipBetweenUsers } from "@/lib/friends/relationship";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -196,6 +197,8 @@ export async function deleteChatHistory(chatId: string): Promise<DeleteChatHisto
       error: deleteError.message ?? "We couldn't clear this chat history right now."
     };
   }
+
+  await resetChatRoomSummariesForRoom(chatId);
 
   revalidatePath(`/chat/${chatId}`);
   revalidatePath("/home");

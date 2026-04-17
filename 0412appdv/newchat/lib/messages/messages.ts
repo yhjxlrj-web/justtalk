@@ -1,6 +1,10 @@
 import "server-only";
 
 import { getChatParticipantContext } from "@/lib/chats/participant-context";
+import {
+  applyMessageToChatRoomSummaries,
+  applyTranslatedPreviewToChatRoomSummary
+} from "@/lib/chats/room-summary";
 import { getBlockedUserIdSetForBlocker, getFriendshipBetweenUsers, hasUserBlocked } from "@/lib/friends/relationship";
 import { getDictionary, getLocaleLabel } from "@/lib/i18n/get-dictionary";
 import { mapViewerMessage } from "@/lib/messages/format";
@@ -194,6 +198,13 @@ async function createMessageTranslation(params: {
   if (translationError) {
     throw new Error(translationError.message ?? "Unable to save translated message.");
   }
+
+  await applyTranslatedPreviewToChatRoomSummary({
+    roomId: chatId,
+    targetUserId,
+    messageId,
+    translatedText
+  });
 }
 
 export async function sendMessage({
@@ -361,6 +372,15 @@ export async function sendMessage({
     });
     throw new Error(messageError?.message ?? "Unable to save your message.");
   }
+
+  await applyMessageToChatRoomSummaries({
+    roomId: chatId,
+    senderId,
+    messageId: messageRow.id,
+    messageCreatedAt: messageRow.created_at,
+    messageKind: messageKind ?? "text",
+    originalText: trimmedText
+  });
 
   if (messageKind === "text") {
     setTimeout(() => {

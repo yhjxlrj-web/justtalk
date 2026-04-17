@@ -1,6 +1,6 @@
 import type { ChatMessage } from "@/types/chat";
 
-type RoomEntrySnapshot = {
+export type RoomEntrySnapshot = {
   initialScrollTargetMessageId: string | null;
   messages: ChatMessage[];
   hasOlderMessages?: boolean;
@@ -18,6 +18,21 @@ export function getCachedRoomEntrySnapshot(roomId: string) {
 
 export function setCachedRoomEntrySnapshot(roomId: string, snapshot: RoomEntrySnapshot) {
   roomEntryCache.set(roomId, snapshot);
+}
+
+export function patchCachedRoomEntrySnapshot(
+  roomId: string,
+  updater: (snapshot: RoomEntrySnapshot | null) => RoomEntrySnapshot | null
+) {
+  const currentSnapshot = roomEntryCache.get(roomId) ?? null;
+  const nextSnapshot = updater(currentSnapshot);
+
+  if (!nextSnapshot) {
+    roomEntryCache.delete(roomId);
+    return;
+  }
+
+  roomEntryCache.set(roomId, nextSnapshot);
 }
 
 export function clearCachedRoomEntrySnapshot(roomId: string) {

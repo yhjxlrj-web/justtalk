@@ -139,6 +139,43 @@ function prefetchRoomRoute(params: {
   roomRoutePrefetches.add(roomId);
 }
 
+export function prewarmChatRoom(params: {
+  roomId: string;
+  router?: { prefetch: (href: string) => void };
+  supabase: BrowserSupabaseClient;
+  viewerId: string;
+}) {
+  const { roomId, router, supabase, viewerId } = params;
+
+  if (router) {
+    prefetchRoomRoute({
+      roomId,
+      router
+    });
+  }
+
+  if (getCachedRoomEntrySnapshot(roomId)) {
+    return Promise.resolve();
+  }
+
+  const existingPreloadPromise = roomPreloadPromises.get(roomId);
+
+  if (existingPreloadPromise) {
+    return existingPreloadPromise;
+  }
+
+  const preloadPromise = preloadRoom({
+    roomId,
+    supabase,
+    viewerId
+  }).finally(() => {
+    roomPreloadPromises.delete(roomId);
+  });
+
+  roomPreloadPromises.set(roomId, preloadPromise);
+  return preloadPromise;
+}
+
 async function preloadRoom(params: {
   roomId: string;
   supabase: BrowserSupabaseClient;
@@ -367,21 +404,11 @@ function preloadRoomQueue(params: {
         roomId: chat.roomId,
         router
       });
-
-      if (roomPreloadPromises.has(chat.roomId) || getCachedRoomEntrySnapshot(chat.roomId)) {
-        continue;
-      }
-
-      const preloadPromise = preloadRoom({
+      await prewarmChatRoom({
         roomId: chat.roomId,
         supabase,
         viewerId
-      }).finally(() => {
-        roomPreloadPromises.delete(chat.roomId);
       });
-
-      roomPreloadPromises.set(chat.roomId, preloadPromise);
-      await preloadPromise;
     }
   })();
 }
