@@ -33,6 +33,7 @@ import {
   UNREAD_CONTEXT_MESSAGE_LIMIT
 } from "@/lib/chats/room-loading";
 import { formatChatTimestamp } from "@/lib/messages/format";
+import { logRealtime } from "@/lib/logging/realtime-log";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import type { ChatMessage, ChatReaction, ChatRoomSummary } from "@/types/chat";
 
@@ -1141,21 +1142,21 @@ export function ChatRoomRealtime({
       const { messageId, reason, translatedLanguage, translatedText } = params;
 
       if (!messageId) {
-        console.log("dedupe skipped reason", {
+        logRealtime("dedupe skipped reason", {
           roomId: room.id,
           reason: "missing-message-id",
           source: reason
-        });
+        }, "debug");
         return;
       }
 
       if (messageIdsRef.current.has(messageId)) {
-        console.log("dedupe skipped reason", {
+        logRealtime("dedupe skipped reason", {
           roomId: room.id,
           messageId,
           reason: "already-present-before-fallback",
           source: reason
-        });
+        }, "debug");
         return;
       }
 
@@ -1172,17 +1173,17 @@ export function ChatRoomRealtime({
       };
 
       if (messageError || !fetchedMessage) {
-        console.log("dedupe skipped reason", {
+        logRealtime("dedupe skipped reason", {
           roomId: room.id,
           messageId,
           reason: "fallback-fetch-failed",
           source: reason,
           error: messageError
-        });
+        }, "warn");
         return;
       }
 
-      console.log("subscription event received", {
+      logRealtime("subscription event received", {
         source: reason,
         roomId: room.id,
         messageId: fetchedMessage.id,
@@ -1192,12 +1193,12 @@ export function ChatRoomRealtime({
 
       setMessages((current) => {
         if (current.some((message) => message.id === fetchedMessage.id)) {
-          console.log("dedupe skipped reason", {
+          logRealtime("dedupe skipped reason", {
             roomId: room.id,
             messageId: fetchedMessage.id,
             reason: "already-present-on-fallback-append",
             source: reason
-          });
+          }, "debug");
           return current;
         }
 
@@ -1211,7 +1212,7 @@ export function ChatRoomRealtime({
           })
         ]);
 
-        console.log("setMessages append executed", {
+        logRealtime("setMessages append executed", {
           roomId: room.id,
           messageId: fetchedMessage.id,
           source: reason,
@@ -2029,7 +2030,7 @@ export function ChatRoomRealtime({
     }
 
     const channel = supabase.channel(`chat-room:${room.id}:${viewerId}`);
-    console.log("subscription created", {
+    logRealtime("subscription created", {
       roomId: room.id,
       viewerId
     });
@@ -2045,7 +2046,7 @@ export function ChatRoomRealtime({
         },
         (payload) => {
           const row = payload.new as RealtimeMessageRow;
-          console.log("subscription event received", {
+          logRealtime("subscription event received", {
             source: "messages-insert",
             roomId: room.id,
             receivedRoomId: row.chat_id,
@@ -2054,25 +2055,25 @@ export function ChatRoomRealtime({
           });
 
           if (row.chat_id !== room.id) {
-            console.log("dedupe skipped reason", {
+            logRealtime("dedupe skipped reason", {
               roomId: room.id,
               receivedRoomId: row.chat_id,
               messageId: row.id,
               reason: "room-mismatch",
               source: "messages-insert"
-            });
+            }, "debug");
             return;
           }
 
           let appendMode: "replace-optimistic" | "append-new" | null = null;
           setMessages((current) => {
             if (current.some((message) => message.id === row.id)) {
-              console.log("dedupe skipped reason", {
+              logRealtime("dedupe skipped reason", {
                 roomId: room.id,
                 messageId: row.id,
                 reason: "already-present",
                 source: "messages-insert"
-              });
+              }, "debug");
               return current;
             }
 
@@ -2150,7 +2151,7 @@ export function ChatRoomRealtime({
               ];
             }
 
-            console.log("setMessages append executed", {
+            logRealtime("setMessages append executed", {
               roomId: room.id,
               messageId: row.id,
               senderId: row.sender_id,
@@ -2202,7 +2203,7 @@ export function ChatRoomRealtime({
         },
         (payload) => {
           const row = payload.new as RealtimeTranslationRow;
-          console.log("subscription event received", {
+          logRealtime("subscription event received", {
             source: "message-translation-insert",
             roomId: room.id,
             receivedRoomId: room.id,
@@ -2211,11 +2212,11 @@ export function ChatRoomRealtime({
           });
 
           if (!row.message_id) {
-            console.log("dedupe skipped reason", {
+            logRealtime("dedupe skipped reason", {
               roomId: room.id,
               reason: "missing-message-id",
               source: "message-translation-insert"
-            });
+            }, "debug");
             return;
           }
 
@@ -2243,7 +2244,7 @@ export function ChatRoomRealtime({
             }
 
             if (didPatch) {
-              console.log("setMessages append executed", {
+              logRealtime("setMessages append executed", {
                 roomId: room.id,
                 messageId: row.message_id,
                 senderId: null,
@@ -2252,14 +2253,14 @@ export function ChatRoomRealtime({
                 nextCount: patched.length
               });
             } else {
-              console.log("dedupe skipped reason", {
+              logRealtime("dedupe skipped reason", {
                 roomId: room.id,
                 messageId: row.message_id,
                 reason: hadMessageBeforePatch
                   ? "translation-patch-no-change"
                   : "translation-target-message-not-found",
                 source: "message-translation-insert"
-              });
+              }, "debug");
             }
 
             return patched;
@@ -2342,7 +2343,7 @@ export function ChatRoomRealtime({
             return;
           }
 
-          console.log("subscription event received", {
+          logRealtime("subscription event received", {
             source: "chat-room-summary-update",
             roomId: room.id,
             receivedRoomId: row.room_id,
@@ -2351,11 +2352,11 @@ export function ChatRoomRealtime({
           });
 
           if (!row.last_message_id) {
-            console.log("dedupe skipped reason", {
+            logRealtime("dedupe skipped reason", {
               roomId: room.id,
               reason: "summary-missing-last-message-id",
               source: "chat-room-summary-update"
-            });
+            }, "debug");
             return;
           }
 
@@ -2377,7 +2378,7 @@ export function ChatRoomRealtime({
       });
 
     return () => {
-      console.log("unsubscribe executed", {
+      logRealtime("unsubscribe executed", {
         roomId: room.id,
         viewerId
       });
