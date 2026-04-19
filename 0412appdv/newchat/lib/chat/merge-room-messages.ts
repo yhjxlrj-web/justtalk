@@ -47,8 +47,15 @@ export function mergeServerMessagesWithPending(serverMessages: ChatMessage[], cu
 
 export function applyOutgoingReadState(
   messages: ChatMessage[],
-  otherUserLastSeenAt: string | null
+  otherUserLastSeenAt: string | null,
+  otherUserLastReadMessageId?: string | null
 ): ChatMessage[] {
+  const messageIndexById = new Map(messages.map((message, index) => [message.id, index]));
+  const lastReadMessageIndex =
+    otherUserLastReadMessageId != null
+      ? (messageIndexById.get(otherUserLastReadMessageId) ?? -1)
+      : -1;
+
   if (!otherUserLastSeenAt) {
     return messages.map((message) =>
       message.direction === "outgoing" &&
@@ -74,8 +81,15 @@ export function applyOutgoingReadState(
     }
 
     const messageTimestamp = toTimestamp(message.createdAt);
-    const readStatus: ChatMessage["readStatus"] =
-      messageTimestamp > 0 && messageTimestamp <= otherSeenTimestamp ? "read" : "unread";
+    const hasReadCursorByMessageId = lastReadMessageIndex >= 0;
+    const currentMessageIndex = messageIndexById.get(message.id) ?? -1;
+    const readStatus: ChatMessage["readStatus"] = hasReadCursorByMessageId
+      ? currentMessageIndex >= 0 && currentMessageIndex <= lastReadMessageIndex
+        ? "read"
+        : "unread"
+      : messageTimestamp > 0 && messageTimestamp <= otherSeenTimestamp
+        ? "read"
+        : "unread";
 
     if (message.readStatus === readStatus) {
       return message;

@@ -26,12 +26,14 @@ type TranslationRow = {
 type ParticipantRow = {
   user_id: string;
   last_seen_at: string | null;
+  last_read_message_id: string | null;
 };
 
 export type RoomMessagesFetchResult = {
   messages: ChatMessage[];
   hasOlderMessages: boolean;
   otherUserLastSeenAt: string | null;
+  otherUserLastReadMessageId: string | null;
 };
 
 function mapMessageRowToChatMessage(params: {
@@ -86,7 +88,10 @@ export async function fetchRoomMessages(params: {
   const { roomId, supabase, viewerId, limit = INITIAL_ROOM_MESSAGE_LIMIT } = params;
   const [{ data: participantRows, error: participantsError }, { data: recentRows, error: messagesError }] =
     await Promise.all([
-      supabase.from("chat_participants").select("user_id, last_seen_at").eq("chat_id", roomId),
+      supabase
+        .from("chat_participants")
+        .select("user_id, last_seen_at, last_read_message_id")
+        .eq("chat_id", roomId),
       supabase
         .from("messages")
         .select(
@@ -109,6 +114,7 @@ export async function fetchRoomMessages(params: {
   const participantList = (participantRows ?? []) as ParticipantRow[];
   const otherParticipant = participantList.find((participant) => participant.user_id !== viewerId) ?? null;
   const otherUserLastSeenAt = otherParticipant?.last_seen_at ?? null;
+  const otherUserLastReadMessageId = otherParticipant?.last_read_message_id ?? null;
 
   const orderedRows = [...((recentRows ?? []) as MessageRow[])].reverse();
   const messageIds = orderedRows.map((row) => row.id);
@@ -162,6 +168,7 @@ export async function fetchRoomMessages(params: {
   return {
     messages: mappedMessages,
     hasOlderMessages,
-    otherUserLastSeenAt
+    otherUserLastSeenAt,
+    otherUserLastReadMessageId
   };
 }

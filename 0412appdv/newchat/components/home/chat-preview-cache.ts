@@ -55,6 +55,17 @@ function isReadAfterLatest(preview: ChatRoomPreview) {
   return viewerLastSeenAt >= latestMessageCreatedAt;
 }
 
+export function normalizeUnreadCountForPreview(preview: ChatRoomPreview) {
+  if (isReadAfterLatest(preview)) {
+    return {
+      ...preview,
+      unreadCount: 0
+    };
+  }
+
+  return preview;
+}
+
 function emitCacheUpdate(previews: ChatRoomPreview[]) {
   if (typeof window === "undefined") {
     return;
@@ -72,8 +83,9 @@ export function getCachedChatPreviews() {
 }
 
 export function setCachedChatPreviews(previews: ChatRoomPreview[]) {
-  cachedChatPreviews = previews;
-  emitCacheUpdate(previews);
+  const normalizedPreviews = previews.map((preview) => normalizeUnreadCountForPreview(preview));
+  cachedChatPreviews = normalizedPreviews;
+  emitCacheUpdate(normalizedPreviews);
 }
 
 export function mergeChatPreviews(
@@ -96,7 +108,7 @@ export function mergeChatPreviews(
   });
 
   if (!safeCachedPreviews || safeCachedPreviews.length === 0) {
-    return safeIncomingPreviews;
+    return safeIncomingPreviews.map((preview) => normalizeUnreadCountForPreview(preview));
   }
 
   const previewMap = new Map<string, ChatRoomPreview>();
@@ -167,7 +179,7 @@ export function mergeChatPreviews(
     resultRoomIds: mergedPreviews.map((preview) => preview.roomId)
   });
 
-  return mergedPreviews;
+  return mergedPreviews.map((preview) => normalizeUnreadCountForPreview(preview));
 }
 
 export function filterChatPreviewsByBlockedPeerIds(
@@ -205,9 +217,11 @@ export function patchCachedChatPreview(
   }
 
   const nextPreviews = options?.moveToFront
-    ? [patchedPreview, ...untouchedPreviews]
+    ? [normalizeUnreadCountForPreview(patchedPreview), ...untouchedPreviews]
     : cachedChatPreviews.map((preview) =>
-        preview.roomId === roomId ? patchedPreview : preview
+        preview.roomId === roomId
+          ? normalizeUnreadCountForPreview(patchedPreview)
+          : preview
       );
 
   setCachedChatPreviews(nextPreviews);

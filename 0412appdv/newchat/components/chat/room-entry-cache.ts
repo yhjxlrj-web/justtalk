@@ -5,6 +5,7 @@ export type RoomEntrySnapshot = {
   messages: ChatMessage[];
   hasOlderMessages?: boolean;
   otherUserLastSeenAt?: string | null;
+  otherUserLastReadMessageId?: string | null;
   preloadedAt: number;
 };
 

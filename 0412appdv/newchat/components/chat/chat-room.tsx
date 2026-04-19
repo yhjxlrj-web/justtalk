@@ -346,7 +346,16 @@ export function ChatRoom({
                   const nextSenderKey = nextMessage?.senderId ?? nextMessage?.direction;
                   const isSameSenderAsPrev = !!prevMessage && prevSenderKey === senderKey;
                   const isSameSenderAsNext = !!nextMessage && nextSenderKey === senderKey;
-                  const showTimestamp = !isSameSenderAsNext;
+                  const showTimestamp =
+                    message.direction === "outgoing" ? true : !isSameSenderAsNext;
+                  const outgoingFooterText =
+                    deliveryStatus === "sending"
+                      ? dictionary.sending
+                      : deliveryStatus === "failed"
+                        ? dictionary.failedToSend
+                        : readStatus === "read"
+                          ? dictionary.read
+                          : dictionary.unread;
 
                   return (
                     <MessageBubble
@@ -355,15 +364,7 @@ export function ChatRoom({
                       isSameSenderAsNext={isSameSenderAsNext}
                       showTimestamp={showTimestamp}
                       footerText={
-                        message.direction === "outgoing" && showTimestamp
-                          ? deliveryStatus === "sending"
-                            ? dictionary.sending
-                            : deliveryStatus === "failed"
-                              ? dictionary.failedToSend
-                              : readStatus === "read"
-                              ? dictionary.read
-                              : dictionary.unread
-                          : null
+                        message.direction === "outgoing" ? outgoingFooterText : null
                       }
                       onOpenImage={message.messageType === "image" ? setSelectedImageMessage : undefined}
                       onRetryMessage={onRetryMessage}

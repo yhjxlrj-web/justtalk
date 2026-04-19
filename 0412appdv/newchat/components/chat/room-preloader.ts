@@ -1,6 +1,7 @@
 "use client";
 
 import { formatChatTimestamp } from "@/lib/messages/format";
+import { applyOutgoingReadState } from "@/lib/chat/merge-room-messages";
 import {
   INITIAL_ROOM_MESSAGE_LIMIT,
   PRELOAD_ROOM_LIMIT,
@@ -41,6 +42,7 @@ type PreloadTranslationRow = {
 type PreloadParticipantRow = {
   user_id: string;
   last_seen_at: string | null;
+  last_read_message_id: string | null;
 };
 
 const roomRoutePrefetches = new Set<string>();
@@ -56,56 +58,6 @@ function getRoomPrewarmInflightKey(roomId: string, viewerId: string) {
 function waitForSequentialPreloadTurn(delayMs: number) {
   return new Promise<void>((resolve) => {
     setTimeout(resolve, delayMs);
-  });
-}
-
-function sortMessages(messages: ChatMessage[]) {
-  return [...messages].sort((left, right) => {
-    const leftTime = left.createdAt ? new Date(left.createdAt).getTime() : 0;
-    const rightTime = right.createdAt ? new Date(right.createdAt).getTime() : 0;
-    return leftTime - rightTime;
-  });
-}
-
-function applyOutgoingReadStatuses(
-  messages: ChatMessage[],
-  otherUserLastSeenAt: string | null
-): ChatMessage[] {
-  const orderedMessages = sortMessages(messages);
-  const outgoingMessages = orderedMessages.filter((message) => message.direction === "outgoing");
-  const readOutgoingMessages = outgoingMessages.filter(
-    (message) =>
-      otherUserLastSeenAt &&
-      message.createdAt &&
-      new Date(message.createdAt).getTime() <= new Date(otherUserLastSeenAt).getTime()
-  );
-  const lastReadMessageId =
-    readOutgoingMessages.length > 0
-      ? readOutgoingMessages[readOutgoingMessages.length - 1].id
-      : null;
-  const outgoingOrder = new Map(outgoingMessages.map((message, index) => [message.id, index]));
-  const lastReadOrder =
-    lastReadMessageId !== null ? outgoingOrder.get(lastReadMessageId) ?? -1 : -1;
-
-  return orderedMessages.map((message) => {
-    if (message.direction !== "outgoing") {
-      return message.readStatus === null ? message : { ...message, readStatus: null };
-    }
-
-    const currentOutgoingOrder = outgoingOrder.get(message.id);
-    let readStatus: ChatMessage["readStatus"] = null;
-
-    if (message.id === lastReadMessageId) {
-      readStatus = "read";
-    } else if (currentOutgoingOrder !== undefined && currentOutgoingOrder > lastReadOrder) {
-      readStatus = "unread";
-    }
-
-    return {
-      ...message,
-      deliveryStatus: "sent",
-      readStatus
-    };
   });
 }
 
@@ -186,7 +138,7 @@ async function preloadRoom(params: {
 
   const { data: participants, error: participantsError } = await supabase
     .from("chat_participants")
-    .select("user_id, last_seen_at")
+    .select("user_id, last_seen_at, last_read_message_id")
     .eq("chat_id", roomId);
 
   if (participantsError) {
@@ -201,6 +153,7 @@ async function preloadRoom(params: {
     participantRows.find((participant) => participant.user_id !== viewerId) ?? null;
   const viewerLastSeenAt = viewerParticipant?.last_seen_at ?? null;
   const otherUserLastSeenAt = otherParticipant?.last_seen_at ?? null;
+  const otherUserLastReadMessageId = otherParticipant?.last_read_message_id ?? null;
 
   const { data: fetchedMessages, error: messagesError } = await supabase
     .from("messages")
@@ -252,15 +205,22 @@ async function preloadRoom(params: {
     } satisfies ChatMessage;
   });
 
+  const baseMessagesWithReadState = applyOutgoingReadState(
+    baseMappedMessages,
+    otherUserLastSeenAt,
+    otherUserLastReadMessageId
+  );
+
   const baseSnapshot = {
     initialScrollTargetMessageId: null,
-    messages: baseMappedMessages,
+    messages: baseMessagesWithReadState,
     hasOlderMessages: false,
     otherUserLastSeenAt,
+    otherUserLastReadMessageId,
     preloadedAt: Date.now()
   };
 
-  setCachedRoomMessages(roomId, baseMappedMessages);
+  setCachedRoomMessages(roomId, baseMessagesWithReadState);
   setCachedRoomEntrySnapshot(roomId, baseSnapshot);
 
   console.log("room prewarm base cached", {
@@ -330,6 +290,7 @@ async function preloadRoom(params: {
       messages: [],
       hasOlderMessages: false,
       otherUserLastSeenAt,
+      otherUserLastReadMessageId,
       preloadedAt: Date.now()
     });
     return;
@@ -353,7 +314,7 @@ async function preloadRoom(params: {
     ])
   );
 
-  const mappedMessages = applyOutgoingReadStatuses(
+  const mappedMessages = applyOutgoingReadState(
     orderedRows.map((message) => {
       const outgoing = message.sender_id === viewerId;
       const translation = translationMap.get(message.id);
@@ -390,7 +351,8 @@ async function preloadRoom(params: {
         reactions: []
       } satisfies ChatMessage;
     }),
-    otherUserLastSeenAt
+    otherUserLastSeenAt,
+    otherUserLastReadMessageId
   );
 
   const oldestLoadedAt = orderedRows[0]?.created_at ?? null;
@@ -418,6 +380,7 @@ async function preloadRoom(params: {
     messages: mappedMessages,
     hasOlderMessages,
     otherUserLastSeenAt,
+    otherUserLastReadMessageId,
     preloadedAt: Date.now()
   });
 }
