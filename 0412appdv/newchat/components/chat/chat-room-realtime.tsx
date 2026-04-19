@@ -26,8 +26,6 @@ import { useRoomPolling } from "@/lib/chat/use-room-polling";
 import {
   type RealtimeChannelStatus,
   type RealtimeInsertMessageRow,
-  type RealtimeParticipantUpdateRow,
-  type RealtimeTranslationInsertRow,
   useRoomRealtime
 } from "@/lib/chat/use-room-realtime";
 import { initialSendMessageFormState } from "@/lib/messages/action-state";
@@ -37,8 +35,6 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import type { ChatMessage, ChatRoomSummary } from "@/types/chat";
 
 const ROOM_POLLING_INTERVAL_MS = 2500;
-const ROOM_READ_MARK_INTERVAL_MS = 2500;
-const ROOM_READ_MARK_THROTTLE_MS = 1200;
 
 type SendSucceededMessage = {
   id: string;
@@ -238,7 +234,6 @@ export function ChatRoomRealtime({
 
   const messagesRef = useRef(messages);
   const otherUserLastSeenAtRef = useRef(otherUserLastSeenAt);
-  const lastReadMarkAtRef = useRef(0);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -281,59 +276,6 @@ export function ChatRoomRealtime({
     };
   }, [room.id]);
 
-  const markRoomAsRead = useCallback(
-    async (reason: string) => {
-      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
-        return;
-      }
-
-      const now = Date.now();
-
-      if (now - lastReadMarkAtRef.current < ROOM_READ_MARK_THROTTLE_MS) {
-        return;
-      }
-
-      lastReadMarkAtRef.current = now;
-      const lastSeenAt = new Date(now).toISOString();
-
-      const { error } = await supabase
-        .from("chat_participants")
-        .update({ last_seen_at: lastSeenAt })
-        .eq("chat_id", room.id)
-        .eq("user_id", viewerId);
-
-      if (error) {
-        console.error("[chat-room] read mark error", {
-          roomId: room.id,
-          viewerId,
-          reason,
-          error
-        });
-        return;
-      }
-
-      console.log("[chat-room] read mark success", {
-        roomId: room.id,
-        viewerId,
-        reason,
-        lastSeenAt
-      });
-    },
-    [room.id, supabase, viewerId]
-  );
-
-  useEffect(() => {
-    void markRoomAsRead("mount");
-
-    const intervalHandle = window.setInterval(() => {
-      void markRoomAsRead("interval");
-    }, ROOM_READ_MARK_INTERVAL_MS);
-
-    return () => {
-      window.clearInterval(intervalHandle);
-    };
-  }, [markRoomAsRead]);
-
   const pollRoomMessages = useCallback(
     async (reason: "initial" | "interval" | "visibility") => {
       const shouldShowInitialLoading = reason === "initial" && messagesRef.current.length === 0;
@@ -369,8 +311,6 @@ export function ChatRoomRealtime({
           reason,
           fetchedCount: fetched.messages.length
         });
-
-        void markRoomAsRead("poll-success");
       } catch (error) {
         setConnectionState("reconnecting");
         console.error("[chat-room] polling fetch error", {
@@ -383,7 +323,7 @@ export function ChatRoomRealtime({
         setIsRoomRefreshing(false);
       }
     },
-    [markRoomAsRead, room.id, supabase, viewerId]
+    [room.id, supabase, viewerId]
   );
 
   useRoomPolling({
@@ -447,77 +387,8 @@ export function ChatRoomRealtime({
       });
 
       syncPreviewCache(room.id, incomingMessage);
-
-      if (row.sender_id !== viewerId) {
-        void markRoomAsRead("incoming-realtime");
-      }
-    },
-    [markRoomAsRead, room.id, viewerId]
-  );
-
-  const handleParticipantUpdate = useCallback(
-    (row: RealtimeParticipantUpdateRow) => {
-      if (row.user_id === viewerId) {
-        return;
-      }
-
-      setOtherUserLastSeenAt(row.last_seen_at);
-      setMessages((current) => {
-        const next = applyOutgoingReadState(current, row.last_seen_at);
-        console.log("[chat-room] setMessages append executed", {
-          roomId: room.id,
-          messageId: null,
-          senderId: row.user_id,
-          mode: "read-status-patch"
-        });
-        return next;
-      });
     },
     [room.id, viewerId]
-  );
-
-  const handleTranslationInsert = useCallback(
-    (row: RealtimeTranslationInsertRow) => {
-      setMessages((current) => {
-        let didPatch = false;
-
-        const next = current.map((message) => {
-          if (message.id !== row.message_id || message.direction !== "incoming") {
-            return message;
-          }
-
-          didPatch = true;
-          return {
-            ...message,
-            displayText: row.translated_text,
-            body: row.translated_text,
-            targetLanguage: row.target_language,
-            language: row.target_language,
-            translationPending: false
-          };
-        });
-
-        if (!didPatch) {
-          console.log("[chat-room] dedupe skipped reason", {
-            roomId: room.id,
-            messageId: row.message_id,
-            senderId: null,
-            reason: "translation-target-not-found"
-          });
-          return current;
-        }
-
-        console.log("[chat-room] setMessages append executed", {
-          roomId: room.id,
-          messageId: row.message_id,
-          senderId: null,
-          mode: "translation-patch"
-        });
-
-        return next;
-      });
-    },
-    [room.id]
   );
 
   const handleRealtimeStatusChange = useCallback((status: RealtimeChannelStatus) => {
@@ -542,8 +413,6 @@ export function ChatRoomRealtime({
     supabase,
     viewerId,
     onInsert: handleRealtimeInsert,
-    onParticipantUpdate: handleParticipantUpdate,
-    onTranslationInsert: handleTranslationInsert,
     onStatusChange: handleRealtimeStatusChange
   });
 
