@@ -28,6 +28,7 @@ export type ChatMessage = {
   canRetry?: boolean;
   deliveryStatus?: "sending" | "sent" | "failed";
   readStatus?: "read" | "unread" | null;
+  translationPending?: boolean;
   reactions?: ChatReaction[];
 };
 

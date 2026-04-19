@@ -39,6 +39,10 @@ export const MessageBubble = memo(function MessageBubble({
   const isImageMessage = message.messageType === "image" && !!message.imageUrl;
   const canOpenImage = isImageMessage && !!onOpenImage;
   const displayBody = showOriginal && canToggleOriginal ? message.originalBody ?? message.body : message.body;
+  const shouldShowTranslationShimmer =
+    message.direction === "incoming" &&
+    message.messageType !== "image" &&
+    message.translationPending === true;
   const showFooter = !!outgoing && !!footerText;
   const isUnreadFooter = showFooter && footerText === dictionary.unread;
   const showTimestampOutside = showTimestamp && !!message.timestamp;
@@ -195,6 +199,7 @@ export const MessageBubble = memo(function MessageBubble({
                     )
                   : cn(
                       "chat-bubble-incoming border border-slate-100 bg-white text-slate-900",
+                      shouldShowTranslationShimmer ? "chat-translation-shimmer" : "",
                       isSameSenderAsPrev ? "rounded-tl-[10px]" : "rounded-tl-[16px]",
                       isSameSenderAsNext ? "rounded-bl-[10px]" : "rounded-bl-[7px]"
                     )

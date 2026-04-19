@@ -574,6 +574,15 @@ html.theme-classic .chat-bubble-incoming {
   }
 }
 
+@keyframes chat-translation-shimmer {
+  0% {
+    transform: translateX(-130%);
+  }
+  100% {
+    transform: translateX(130%);
+  }
+}
+
 .message-pop {
   animation: message-pop 0.7s ease-out;
 }
@@ -582,9 +591,38 @@ html.theme-classic .chat-bubble-incoming {
   animation: home-loading-bar 1.15s ease-in-out infinite;
 }
 
+.chat-translation-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+
+.chat-translation-shimmer::after {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  content: "";
+  background: linear-gradient(
+    110deg,
+    rgba(255, 255, 255, 0) 20%,
+    rgba(255, 255, 255, 0.18) 50%,
+    rgba(255, 255, 255, 0) 80%
+  );
+  animation: chat-translation-shimmer 1.25s ease-in-out infinite;
+}
+
+html.theme-dark .chat-translation-shimmer::after {
+  background: linear-gradient(
+    110deg,
+    rgba(255, 255, 255, 0) 20%,
+    rgba(255, 255, 255, 0.12) 50%,
+    rgba(255, 255, 255, 0) 80%
+  );
+}
+
 @media (prefers-reduced-motion: reduce) {
   .message-pop,
-  .home-loading-bar {
+  .home-loading-bar,
+  .chat-translation-shimmer::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
   }

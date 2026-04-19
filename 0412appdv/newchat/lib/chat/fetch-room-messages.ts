@@ -42,9 +42,9 @@ function mapMessageRowToChatMessage(params: {
   const { row, translation, viewerId } = params;
   const outgoing = row.sender_id === viewerId;
   const messageType = row.message_kind ?? "text";
-  const displayBody = outgoing
-    ? row.original_text
-    : translation?.translated_text ?? row.original_text;
+  const hasTranslation = !!translation?.translated_text;
+  const displayBody = outgoing ? row.original_text : translation?.translated_text ?? row.original_text;
+  const translationPending = !outgoing && messageType === "text" && !hasTranslation;
 
   return {
     id: row.id,
@@ -72,6 +72,7 @@ function mapMessageRowToChatMessage(params: {
     canRetry: outgoing,
     deliveryStatus: outgoing ? "sent" : undefined,
     readStatus: null,
+    translationPending,
     reactions: []
   };
 }

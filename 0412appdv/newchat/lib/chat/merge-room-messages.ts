@@ -44,3 +44,46 @@ export function mergeServerMessagesWithPending(serverMessages: ChatMessage[], cu
   const pendingMessages = extractPendingMessages(currentMessages);
   return dedupeRoomMessagesById([...serverMessages, ...pendingMessages]);
 }
+
+export function applyOutgoingReadState(
+  messages: ChatMessage[],
+  otherUserLastSeenAt: string | null
+): ChatMessage[] {
+  if (!otherUserLastSeenAt) {
+    return messages.map((message) =>
+      message.direction === "outgoing" &&
+      message.deliveryStatus !== "sending" &&
+      message.deliveryStatus !== "failed"
+        ? {
+            ...message,
+            readStatus: "unread" as const
+          }
+        : message
+    );
+  }
+
+  const otherSeenTimestamp = toTimestamp(otherUserLastSeenAt);
+
+  return messages.map((message) => {
+    if (message.direction !== "outgoing") {
+      return message;
+    }
+
+    if (message.deliveryStatus === "sending" || message.deliveryStatus === "failed") {
+      return message;
+    }
+
+    const messageTimestamp = toTimestamp(message.createdAt);
+    const readStatus: ChatMessage["readStatus"] =
+      messageTimestamp > 0 && messageTimestamp <= otherSeenTimestamp ? "read" : "unread";
+
+    if (message.readStatus === readStatus) {
+      return message;
+    }
+
+    return {
+      ...message,
+      readStatus
+    };
+  });
+}

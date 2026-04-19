@@ -17,6 +17,7 @@ import {
 import { getChatRoomSummaryAction } from "@/lib/chats/actions";
 import { fetchRoomMessages } from "@/lib/chat/fetch-room-messages";
 import {
+  applyOutgoingReadState,
   dedupeRoomMessagesById,
   mergeServerMessagesWithPending,
   sortRoomMessagesStable
@@ -25,6 +26,8 @@ import { useRoomPolling } from "@/lib/chat/use-room-polling";
 import {
   type RealtimeChannelStatus,
   type RealtimeInsertMessageRow,
+  type RealtimeParticipantUpdateRow,
+  type RealtimeTranslationInsertRow,
   useRoomRealtime
 } from "@/lib/chat/use-room-realtime";
 import { initialSendMessageFormState } from "@/lib/messages/action-state";
@@ -34,6 +37,8 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import type { ChatMessage, ChatRoomSummary } from "@/types/chat";
 
 const ROOM_POLLING_INTERVAL_MS = 2500;
+const ROOM_READ_MARK_INTERVAL_MS = 2500;
+const ROOM_READ_MARK_THROTTLE_MS = 1200;
 
 type SendSucceededMessage = {
   id: string;
@@ -60,6 +65,7 @@ function mapRealtimeInsertToMessage(row: RealtimeInsertMessageRow, viewerId: str
   const outgoing = row.sender_id === viewerId;
   const messageType = row.message_kind ?? "text";
   const displayBody = row.original_text;
+  const translationPending = !outgoing && messageType === "text";
 
   return {
     id: row.id,
@@ -83,6 +89,7 @@ function mapRealtimeInsertToMessage(row: RealtimeInsertMessageRow, viewerId: str
     canRetry: outgoing,
     deliveryStatus: outgoing ? "sent" : undefined,
     readStatus: null,
+    translationPending,
     reactions: []
   };
 }
@@ -112,6 +119,7 @@ function mapSendSucceededToMessage(message: SendSucceededMessage, viewerId: stri
     canRetry: true,
     deliveryStatus: "sent",
     readStatus: "unread",
+    translationPending: false,
     reactions: []
   };
 }
@@ -157,6 +165,7 @@ function mapOptimisticMessageToChatMessage(params: {
     canRetry: true,
     deliveryStatus: "sending",
     readStatus: null,
+    translationPending: false,
     reactions: []
   };
 }
@@ -201,10 +210,10 @@ export function ChatRoomRealtime({
   const cachedRoomEntrySnapshot = getCachedRoomEntrySnapshot(room.id);
   const cachedMessages = getCachedRoomMessages(room.id) ?? cachedRoomEntrySnapshot?.messages ?? null;
   const seededMessages = cachedMessages ?? initialMessages;
-  const sortedSeededMessages = useMemo(
-    () => sortRoomMessagesStable(seededMessages),
-    [seededMessages]
-  );
+  const sortedSeededMessages = useMemo(() => {
+    const sortedMessages = sortRoomMessagesStable(seededMessages);
+    return applyOutgoingReadState(sortedMessages, cachedRoomEntrySnapshot?.otherUserLastSeenAt ?? null);
+  }, [cachedRoomEntrySnapshot?.otherUserLastSeenAt, seededMessages]);
 
   const [roomState, setRoomState] = useState(room);
   const [messages, setMessages] = useState<ChatMessage[]>(sortedSeededMessages);
@@ -228,6 +237,8 @@ export function ChatRoomRealtime({
   );
 
   const messagesRef = useRef(messages);
+  const otherUserLastSeenAtRef = useRef(otherUserLastSeenAt);
+  const lastReadMarkAtRef = useRef(0);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -240,6 +251,10 @@ export function ChatRoomRealtime({
       preloadedAt: Date.now()
     });
   }, [hasOlderMessages, initialScrollTargetMessageId, messages, otherUserLastSeenAt, room.id]);
+
+  useEffect(() => {
+    otherUserLastSeenAtRef.current = otherUserLastSeenAt;
+  }, [otherUserLastSeenAt]);
 
   useEffect(() => {
     console.log("[chat-room] chat-room mounted", { roomId: room.id, viewerId });
@@ -266,6 +281,59 @@ export function ChatRoomRealtime({
     };
   }, [room.id]);
 
+  const markRoomAsRead = useCallback(
+    async (reason: string) => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+        return;
+      }
+
+      const now = Date.now();
+
+      if (now - lastReadMarkAtRef.current < ROOM_READ_MARK_THROTTLE_MS) {
+        return;
+      }
+
+      lastReadMarkAtRef.current = now;
+      const lastSeenAt = new Date(now).toISOString();
+
+      const { error } = await supabase
+        .from("chat_participants")
+        .update({ last_seen_at: lastSeenAt })
+        .eq("chat_id", room.id)
+        .eq("user_id", viewerId);
+
+      if (error) {
+        console.error("[chat-room] read mark error", {
+          roomId: room.id,
+          viewerId,
+          reason,
+          error
+        });
+        return;
+      }
+
+      console.log("[chat-room] read mark success", {
+        roomId: room.id,
+        viewerId,
+        reason,
+        lastSeenAt
+      });
+    },
+    [room.id, supabase, viewerId]
+  );
+
+  useEffect(() => {
+    void markRoomAsRead("mount");
+
+    const intervalHandle = window.setInterval(() => {
+      void markRoomAsRead("interval");
+    }, ROOM_READ_MARK_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(intervalHandle);
+    };
+  }, [markRoomAsRead]);
+
   const pollRoomMessages = useCallback(
     async (reason: "initial" | "interval" | "visibility") => {
       const shouldShowInitialLoading = reason === "initial" && messagesRef.current.length === 0;
@@ -284,7 +352,8 @@ export function ChatRoomRealtime({
         });
 
         setMessages((current) => {
-          const next = mergeServerMessagesWithPending(fetched.messages, current);
+          const mergedMessages = mergeServerMessagesWithPending(fetched.messages, current);
+          const next = applyOutgoingReadState(mergedMessages, fetched.otherUserLastSeenAt);
           setHasRecentMessages(next.length > 0);
           return next;
         });
@@ -300,6 +369,8 @@ export function ChatRoomRealtime({
           reason,
           fetchedCount: fetched.messages.length
         });
+
+        void markRoomAsRead("poll-success");
       } catch (error) {
         setConnectionState("reconnecting");
         console.error("[chat-room] polling fetch error", {
@@ -312,7 +383,7 @@ export function ChatRoomRealtime({
         setIsRoomRefreshing(false);
       }
     },
-    [room.id, supabase, viewerId]
+    [markRoomAsRead, room.id, supabase, viewerId]
   );
 
   useRoomPolling({
@@ -362,6 +433,7 @@ export function ChatRoomRealtime({
               message.id === matchedSendingMessage.id ? incomingMessage : message
             )
           : dedupeRoomMessagesById([...current, incomingMessage]);
+        const withReadState = applyOutgoingReadState(nextMessages, otherUserLastSeenAtRef.current);
 
         console.log("[chat-room] setMessages append executed", {
           roomId: room.id,
@@ -370,13 +442,82 @@ export function ChatRoomRealtime({
           mode: matchedSendingMessage ? "replace-sending" : "append"
         });
 
-        setHasRecentMessages(nextMessages.length > 0);
-        return nextMessages;
+        setHasRecentMessages(withReadState.length > 0);
+        return withReadState;
       });
 
       syncPreviewCache(room.id, incomingMessage);
+
+      if (row.sender_id !== viewerId) {
+        void markRoomAsRead("incoming-realtime");
+      }
+    },
+    [markRoomAsRead, room.id, viewerId]
+  );
+
+  const handleParticipantUpdate = useCallback(
+    (row: RealtimeParticipantUpdateRow) => {
+      if (row.user_id === viewerId) {
+        return;
+      }
+
+      setOtherUserLastSeenAt(row.last_seen_at);
+      setMessages((current) => {
+        const next = applyOutgoingReadState(current, row.last_seen_at);
+        console.log("[chat-room] setMessages append executed", {
+          roomId: room.id,
+          messageId: null,
+          senderId: row.user_id,
+          mode: "read-status-patch"
+        });
+        return next;
+      });
     },
     [room.id, viewerId]
+  );
+
+  const handleTranslationInsert = useCallback(
+    (row: RealtimeTranslationInsertRow) => {
+      setMessages((current) => {
+        let didPatch = false;
+
+        const next = current.map((message) => {
+          if (message.id !== row.message_id || message.direction !== "incoming") {
+            return message;
+          }
+
+          didPatch = true;
+          return {
+            ...message,
+            displayText: row.translated_text,
+            body: row.translated_text,
+            targetLanguage: row.target_language,
+            language: row.target_language,
+            translationPending: false
+          };
+        });
+
+        if (!didPatch) {
+          console.log("[chat-room] dedupe skipped reason", {
+            roomId: room.id,
+            messageId: row.message_id,
+            senderId: null,
+            reason: "translation-target-not-found"
+          });
+          return current;
+        }
+
+        console.log("[chat-room] setMessages append executed", {
+          roomId: room.id,
+          messageId: row.message_id,
+          senderId: null,
+          mode: "translation-patch"
+        });
+
+        return next;
+      });
+    },
+    [room.id]
   );
 
   const handleRealtimeStatusChange = useCallback((status: RealtimeChannelStatus) => {
@@ -401,6 +542,8 @@ export function ChatRoomRealtime({
     supabase,
     viewerId,
     onInsert: handleRealtimeInsert,
+    onParticipantUpdate: handleParticipantUpdate,
+    onTranslationInsert: handleTranslationInsert,
     onStatusChange: handleRealtimeStatusChange
   });
 
@@ -424,7 +567,8 @@ export function ChatRoomRealtime({
       });
 
       setMessages((current) => {
-        const nextMessages = dedupeRoomMessagesById([...current, optimisticMessage]);
+        const mergedMessages = dedupeRoomMessagesById([...current, optimisticMessage]);
+        const nextMessages = applyOutgoingReadState(mergedMessages, otherUserLastSeenAtRef.current);
         setHasRecentMessages(nextMessages.length > 0);
         return nextMessages;
       });
@@ -436,14 +580,17 @@ export function ChatRoomRealtime({
 
   const handleSendFailed = useCallback((tempId: string) => {
     setMessages((current) =>
-      current.map((message) =>
-        message.id === tempId
-          ? {
-              ...message,
-              deliveryStatus: "failed",
-              canRetry: true
-            }
-          : message
+      applyOutgoingReadState(
+        current.map((message) =>
+          message.id === tempId
+            ? {
+                ...message,
+                deliveryStatus: "failed",
+                canRetry: true
+              }
+            : message
+        ),
+        otherUserLastSeenAtRef.current
       )
     );
   }, []);
@@ -460,8 +607,9 @@ export function ChatRoomRealtime({
         const merged = hasTemp
           ? dedupeRoomMessagesById(replacedMessages)
           : dedupeRoomMessagesById([...replacedMessages, resolvedMessage]);
-        setHasRecentMessages(merged.length > 0);
-        return merged;
+        const withReadState = applyOutgoingReadState(merged, otherUserLastSeenAtRef.current);
+        setHasRecentMessages(withReadState.length > 0);
+        return withReadState;
       });
 
       syncPreviewCache(room.id, resolvedMessage);
