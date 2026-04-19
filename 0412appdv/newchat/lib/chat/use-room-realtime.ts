@@ -20,7 +20,6 @@ export type RealtimeParticipantUpdateRow = {
   chat_id: string;
   user_id: string;
   last_seen_at: string | null;
-  last_read_message_id?: string | null;
 };
 
 export type RealtimeTranslationInsertRow = {
@@ -28,12 +27,6 @@ export type RealtimeTranslationInsertRow = {
   translated_text: string;
   target_language: string;
   target_user_id: string;
-};
-
-export type RealtimeProfilePresenceUpdateRow = {
-  id: string;
-  last_seen_at: string | null;
-  show_last_seen: boolean | null;
 };
 
 export type RealtimeChannelStatus =
@@ -50,11 +43,9 @@ export function useRoomRealtime(params: {
   roomId: string;
   supabase: any;
   viewerId: string;
-  peerUserId?: string;
   onInsert: (row: RealtimeInsertMessageRow) => void;
   onParticipantUpdate?: (row: RealtimeParticipantUpdateRow) => void;
   onTranslationInsert?: (row: RealtimeTranslationInsertRow) => void;
-  onPeerProfileUpdate?: (row: RealtimeProfilePresenceUpdateRow) => void;
   onStatusChange?: (status: RealtimeChannelStatus) => void;
 }) {
   const {
@@ -62,11 +53,9 @@ export function useRoomRealtime(params: {
     roomId,
     supabase,
     viewerId,
-    peerUserId,
     onInsert,
     onParticipantUpdate,
     onTranslationInsert,
-    onPeerProfileUpdate,
     onStatusChange
   } = params;
 
@@ -78,7 +67,7 @@ export function useRoomRealtime(params: {
     const channel = supabase.channel(`chat-room-basic:${roomId}:${viewerId}`);
     console.log("[chat-room] subscription created", { roomId, viewerId });
 
-    const realtimeChannel = channel
+    channel
       .on(
         "postgres_changes",
         {
@@ -114,8 +103,7 @@ export function useRoomRealtime(params: {
             source: "participant-update",
             roomId,
             userId: row.user_id,
-            lastSeenAt: row.last_seen_at,
-            lastReadMessageId: row.last_read_message_id
+            lastSeenAt: row.last_seen_at
           });
 
           onParticipantUpdate?.(row);
@@ -141,34 +129,8 @@ export function useRoomRealtime(params: {
 
           onTranslationInsert?.(row);
         }
-      );
-
-    if (peerUserId) {
-      realtimeChannel.on(
-        "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "profiles",
-          filter: `id=eq.${peerUserId}`
-        },
-        (payload: { new: RealtimeProfilePresenceUpdateRow }) => {
-          const row = payload.new;
-
-          console.log("[chat-room] subscription event received", {
-            source: "peer-profile-update",
-            roomId,
-            peerUserId: row.id,
-            lastSeenAt: row.last_seen_at,
-            showLastSeen: row.show_last_seen
-          });
-
-          onPeerProfileUpdate?.(row);
-        }
-      );
-    }
-
-    realtimeChannel.subscribe((status: RealtimeChannelStatus) => {
+      )
+      .subscribe((status: RealtimeChannelStatus) => {
         console.log("[chat-room] subscription status", { roomId, viewerId, status });
         onStatusChange?.(status);
       });
@@ -180,11 +142,9 @@ export function useRoomRealtime(params: {
   }, [
     enabled,
     onInsert,
-    onPeerProfileUpdate,
     onParticipantUpdate,
     onStatusChange,
     onTranslationInsert,
-    peerUserId,
     roomId,
     supabase,
     viewerId

@@ -13,7 +13,6 @@ import {
   filterChatPreviewsByBlockedPeerIds,
   getCachedChatPreviews,
   mergeChatPreviews,
-  normalizeUnreadCountForPreview,
   setCachedChatPreviews,
   subscribeChatPreviewCache
 } from "@/components/home/chat-preview-cache";
@@ -44,22 +43,6 @@ type RealtimeTranslationRow = {
   target_language: string;
   translated_text: string;
   created_at: string;
-};
-
-type RealtimeParticipantUpdateRow = {
-  chat_id: string;
-  user_id: string;
-  last_seen_at: string | null;
-  last_read_message_id?: string | null;
-};
-
-type RealtimeSummaryUpdateRow = {
-  room_id: string;
-  user_id: string;
-  last_message_id?: string | null;
-  last_message_preview?: string | null;
-  last_message_created_at?: string | null;
-  unread_count?: number | null;
 };
 
 const ROOM_MESSAGE_PREWARM_LIMIT = 80;
@@ -215,9 +198,7 @@ export function RealtimeChatList({
 }) {
   const [chats, setChats] = useState(() => {
     const cachedOrInitial = getCachedChatPreviews() ?? initialChats;
-    return filterChatPreviewsByBlockedPeerIds(cachedOrInitial, blockedPeerUserIds).filteredPreviews.map(
-      (chat) => normalizeUnreadCountForPreview(chat)
-    );
+    return filterChatPreviewsByBlockedPeerIds(cachedOrInitial, blockedPeerUserIds).filteredPreviews;
   });
   const [isConnecting, setIsConnecting] = useState(true);
   const router = useRouter();
@@ -367,9 +348,7 @@ export function RealtimeChatList({
           const moved = updated.find((chat) => chat.roomId === row.chat_id);
           const rest = updated.filter((chat) => chat.roomId !== row.chat_id);
 
-          const nextChats = (moved ? [moved, ...rest] : updated).map((chat) =>
-            normalizeUnreadCountForPreview(chat)
-          );
+          const nextChats = moved ? [moved, ...rest] : updated;
           setCachedChatPreviews(nextChats);
           return nextChats;
         });
@@ -381,57 +360,6 @@ export function RealtimeChatList({
           router,
           supabase,
           viewerId
-        });
-      })
-      .on("postgres_changes", {
-        event: "UPDATE",
-        schema: "public",
-        table: "chat_participants",
-        filter: `user_id=eq.${viewerId}`
-      }, (payload) => {
-        const row = payload.new as RealtimeParticipantUpdateRow;
-
-        setChats((current) => {
-          const nextChats = current.map((chat) =>
-            chat.roomId === row.chat_id
-              ? normalizeUnreadCountForPreview({
-                  ...chat,
-                  viewerLastSeenAt: row.last_seen_at ?? undefined
-                })
-              : chat
-          );
-
-          setCachedChatPreviews(nextChats);
-          return nextChats;
-        });
-      })
-      .on("postgres_changes", {
-        event: "UPDATE",
-        schema: "public",
-        table: "chat_room_summaries",
-        filter: `user_id=eq.${viewerId}`
-      }, (payload) => {
-        const row = payload.new as RealtimeSummaryUpdateRow;
-
-        setChats((current) => {
-          const nextChats = current.map((chat) =>
-            chat.roomId === row.room_id
-              ? normalizeUnreadCountForPreview({
-                  ...chat,
-                  latestMessagePreview: row.last_message_preview?.trim() || chat.latestMessagePreview,
-                  latestMessageCreatedAt:
-                    row.last_message_created_at ?? chat.latestMessageCreatedAt,
-                  latestMessageAt: row.last_message_created_at
-                    ? formatChatTimestamp(row.last_message_created_at)
-                    : chat.latestMessageAt,
-                  lastMessageId: row.last_message_id ?? chat.lastMessageId,
-                  unreadCount: Math.max(0, row.unread_count ?? chat.unreadCount ?? 0)
-                })
-              : chat
-          );
-
-          setCachedChatPreviews(nextChats);
-          return nextChats;
         });
       })
       .on("postgres_changes", {

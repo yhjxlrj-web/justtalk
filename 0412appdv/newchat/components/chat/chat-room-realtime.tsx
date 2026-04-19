@@ -26,7 +26,6 @@ import { useRoomPolling } from "@/lib/chat/use-room-polling";
 import {
   type RealtimeChannelStatus,
   type RealtimeInsertMessageRow,
-  type RealtimeProfilePresenceUpdateRow,
   type RealtimeParticipantUpdateRow,
   type RealtimeTranslationInsertRow,
   useRoomRealtime
@@ -40,7 +39,6 @@ import type { ChatMessage, ChatRoomSummary } from "@/types/chat";
 const ROOM_POLLING_INTERVAL_MS = 2500;
 const ROOM_READ_MARK_INTERVAL_MS = 2500;
 const ROOM_READ_MARK_THROTTLE_MS = 1200;
-const ONLINE_ACTIVITY_WINDOW_MS = 2 * 60 * 1000;
 
 type SendSucceededMessage = {
   id: string;
@@ -61,111 +59,6 @@ function createClientMessageId() {
   }
 
   return `client-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-}
-
-function toTimestamp(value?: string | null) {
-  if (!value) {
-    return 0;
-  }
-
-  const timestamp = new Date(value).getTime();
-  return Number.isNaN(timestamp) ? 0 : timestamp;
-}
-
-function pickLatestTimestamp(
-  ...values: Array<string | null | undefined>
-) {
-  let latest: string | null = null;
-  let latestTimestamp = 0;
-
-  for (const value of values) {
-    const timestamp = toTimestamp(value);
-
-    if (timestamp > latestTimestamp) {
-      latestTimestamp = timestamp;
-      latest = value ?? null;
-    }
-  }
-
-  return latest;
-}
-
-function formatPresenceTopic(lastSeenAt: string | null, locale: string) {
-  if (!lastSeenAt) {
-    return "";
-  }
-
-  const lastSeenTime = toTimestamp(lastSeenAt);
-
-  if (lastSeenTime <= 0) {
-    return "";
-  }
-
-  const isOnline = Date.now() - lastSeenTime <= ONLINE_ACTIVITY_WINDOW_MS;
-
-  if (isOnline) {
-    if (locale === "ko") {
-      return "온라인";
-    }
-
-    if (locale === "es") {
-      return "En linea";
-    }
-
-    return "Online";
-  }
-
-  const diffMinutes = Math.max(0, Math.floor((Date.now() - lastSeenTime) / 60000));
-
-  if (locale === "ko") {
-    if (diffMinutes < 60) {
-      return `${Math.max(1, diffMinutes)}분 전 접속`;
-    }
-
-    if (diffMinutes <= 5 * 60) {
-      return `${Math.max(1, Math.floor(diffMinutes / 60))}시간 전 접속`;
-    }
-
-    if (diffMinutes <= 24 * 60) {
-      return "최근 접속함";
-    }
-
-    return `${Math.max(1, Math.floor(diffMinutes / (24 * 60)))}일 전 접속`;
-  }
-
-  if (locale === "es") {
-    if (diffMinutes < 60) {
-      return `Activo hace ${Math.max(1, diffMinutes)} min`;
-    }
-
-    if (diffMinutes <= 5 * 60) {
-      const hours = Math.max(1, Math.floor(diffMinutes / 60));
-      return `Activo hace ${hours} ${hours === 1 ? "hora" : "horas"}`;
-    }
-
-    if (diffMinutes <= 24 * 60) {
-      return "Activo recientemente";
-    }
-
-    const days = Math.max(1, Math.floor(diffMinutes / (24 * 60)));
-    return `Activo hace ${days} ${days === 1 ? "dia" : "dias"}`;
-  }
-
-  if (diffMinutes < 60) {
-    return `Active ${Math.max(1, diffMinutes)} min ago`;
-  }
-
-  if (diffMinutes <= 5 * 60) {
-    const hours = Math.max(1, Math.floor(diffMinutes / 60));
-    return `Active ${hours} ${hours === 1 ? "hour" : "hours"} ago`;
-  }
-
-  if (diffMinutes <= 24 * 60) {
-    return "Recently active";
-  }
-
-  const days = Math.max(1, Math.floor(diffMinutes / (24 * 60)));
-  return `Active ${days} ${days === 1 ? "day" : "days"} ago`;
 }
 
 function mapRealtimeInsertToMessage(row: RealtimeInsertMessageRow, viewerId: string): ChatMessage {
@@ -319,16 +212,8 @@ export function ChatRoomRealtime({
   const seededMessages = cachedMessages ?? initialMessages;
   const sortedSeededMessages = useMemo(() => {
     const sortedMessages = sortRoomMessagesStable(seededMessages);
-    return applyOutgoingReadState(
-      sortedMessages,
-      cachedRoomEntrySnapshot?.otherUserLastSeenAt ?? null,
-      cachedRoomEntrySnapshot?.otherUserLastReadMessageId ?? null
-    );
-  }, [
-    cachedRoomEntrySnapshot?.otherUserLastReadMessageId,
-    cachedRoomEntrySnapshot?.otherUserLastSeenAt,
-    seededMessages
-  ]);
+    return applyOutgoingReadState(sortedMessages, cachedRoomEntrySnapshot?.otherUserLastSeenAt ?? null);
+  }, [cachedRoomEntrySnapshot?.otherUserLastSeenAt, seededMessages]);
 
   const [roomState, setRoomState] = useState(room);
   const [messages, setMessages] = useState<ChatMessage[]>(sortedSeededMessages);
@@ -344,15 +229,6 @@ export function ChatRoomRealtime({
   const [otherUserLastSeenAt, setOtherUserLastSeenAt] = useState<string | null>(
     cachedRoomEntrySnapshot?.otherUserLastSeenAt ?? null
   );
-  const [otherUserLastReadMessageId, setOtherUserLastReadMessageId] = useState<string | null>(
-    cachedRoomEntrySnapshot?.otherUserLastReadMessageId ?? null
-  );
-  const [peerProfileLastSeenAt, setPeerProfileLastSeenAt] = useState<string | null>(
-    room.peerProfile?.lastSeenAt ?? null
-  );
-  const [peerShowLastSeen, setPeerShowLastSeen] = useState(
-    room.peerProfile?.showLastSeen !== false
-  );
   const [hasResolvedInitialScrollTarget, setHasResolvedInitialScrollTarget] = useState(
     sortedSeededMessages.length > 0
   );
@@ -362,7 +238,6 @@ export function ChatRoomRealtime({
 
   const messagesRef = useRef(messages);
   const otherUserLastSeenAtRef = useRef(otherUserLastSeenAt);
-  const otherUserLastReadMessageIdRef = useRef(otherUserLastReadMessageId);
   const lastReadMarkAtRef = useRef(0);
 
   useEffect(() => {
@@ -373,25 +248,13 @@ export function ChatRoomRealtime({
       messages,
       hasOlderMessages,
       otherUserLastSeenAt,
-      otherUserLastReadMessageId,
       preloadedAt: Date.now()
     });
-  }, [
-    hasOlderMessages,
-    initialScrollTargetMessageId,
-    messages,
-    otherUserLastReadMessageId,
-    otherUserLastSeenAt,
-    room.id
-  ]);
+  }, [hasOlderMessages, initialScrollTargetMessageId, messages, otherUserLastSeenAt, room.id]);
 
   useEffect(() => {
     otherUserLastSeenAtRef.current = otherUserLastSeenAt;
   }, [otherUserLastSeenAt]);
-
-  useEffect(() => {
-    otherUserLastReadMessageIdRef.current = otherUserLastReadMessageId;
-  }, [otherUserLastReadMessageId]);
 
   useEffect(() => {
     console.log("[chat-room] chat-room mounted", { roomId: room.id, viewerId });
@@ -418,11 +281,6 @@ export function ChatRoomRealtime({
     };
   }, [room.id]);
 
-  useEffect(() => {
-    setPeerShowLastSeen(roomState.peerProfile?.showLastSeen !== false);
-    setPeerProfileLastSeenAt(roomState.peerProfile?.lastSeenAt ?? null);
-  }, [roomState.peerProfile?.id, roomState.peerProfile?.lastSeenAt, roomState.peerProfile?.showLastSeen]);
-
   const markRoomAsRead = useCallback(
     async (reason: string) => {
       if (typeof document !== "undefined" && document.visibilityState !== "visible") {
@@ -437,24 +295,10 @@ export function ChatRoomRealtime({
 
       lastReadMarkAtRef.current = now;
       const lastSeenAt = new Date(now).toISOString();
-      const latestIncomingMessageId =
-        [...messagesRef.current]
-          .reverse()
-          .find((message) => message.direction === "incoming")?.id ?? null;
-      const participantUpdatePayload: {
-        last_seen_at: string;
-        last_read_message_id?: string;
-      } = {
-        last_seen_at: lastSeenAt
-      };
-
-      if (latestIncomingMessageId) {
-        participantUpdatePayload.last_read_message_id = latestIncomingMessageId;
-      }
 
       const { error } = await supabase
         .from("chat_participants")
-        .update(participantUpdatePayload)
+        .update({ last_seen_at: lastSeenAt })
         .eq("chat_id", room.id)
         .eq("user_id", viewerId);
 
@@ -472,15 +316,8 @@ export function ChatRoomRealtime({
         roomId: room.id,
         viewerId,
         reason,
-        lastSeenAt,
-        lastReadMessageId: latestIncomingMessageId
+        lastSeenAt
       });
-
-      patchCachedChatPreview(room.id, (preview) => ({
-        ...preview,
-        unreadCount: 0,
-        viewerLastSeenAt: lastSeenAt
-      }));
     },
     [room.id, supabase, viewerId]
   );
@@ -516,17 +353,12 @@ export function ChatRoomRealtime({
 
         setMessages((current) => {
           const mergedMessages = mergeServerMessagesWithPending(fetched.messages, current);
-          const next = applyOutgoingReadState(
-            mergedMessages,
-            fetched.otherUserLastSeenAt,
-            fetched.otherUserLastReadMessageId
-          );
+          const next = applyOutgoingReadState(mergedMessages, fetched.otherUserLastSeenAt);
           setHasRecentMessages(next.length > 0);
           return next;
         });
 
         setOtherUserLastSeenAt(fetched.otherUserLastSeenAt);
-        setOtherUserLastReadMessageId(fetched.otherUserLastReadMessageId);
         setHasOlderMessages(fetched.hasOlderMessages);
         setInitialScrollTargetMessageId(null);
         setHasResolvedInitialScrollTarget(true);
@@ -601,11 +433,7 @@ export function ChatRoomRealtime({
               message.id === matchedSendingMessage.id ? incomingMessage : message
             )
           : dedupeRoomMessagesById([...current, incomingMessage]);
-        const withReadState = applyOutgoingReadState(
-          nextMessages,
-          otherUserLastSeenAtRef.current,
-          otherUserLastReadMessageIdRef.current
-        );
+        const withReadState = applyOutgoingReadState(nextMessages, otherUserLastSeenAtRef.current);
 
         console.log("[chat-room] setMessages append executed", {
           roomId: room.id,
@@ -634,13 +462,8 @@ export function ChatRoomRealtime({
       }
 
       setOtherUserLastSeenAt(row.last_seen_at);
-      setOtherUserLastReadMessageId(row.last_read_message_id ?? null);
       setMessages((current) => {
-        const next = applyOutgoingReadState(
-          current,
-          row.last_seen_at,
-          row.last_read_message_id ?? null
-        );
+        const next = applyOutgoingReadState(current, row.last_seen_at);
         console.log("[chat-room] setMessages append executed", {
           roomId: room.id,
           messageId: null,
@@ -697,18 +520,6 @@ export function ChatRoomRealtime({
     [room.id]
   );
 
-  const handlePeerProfileUpdate = useCallback(
-    (row: RealtimeProfilePresenceUpdateRow) => {
-      if (!roomState.peerProfile || row.id !== roomState.peerProfile.id) {
-        return;
-      }
-
-      setPeerShowLastSeen(row.show_last_seen !== false);
-      setPeerProfileLastSeenAt(row.last_seen_at);
-    },
-    [roomState.peerProfile]
-  );
-
   const handleRealtimeStatusChange = useCallback((status: RealtimeChannelStatus) => {
     if (status === "SUBSCRIBED") {
       setConnectionState("connected");
@@ -730,11 +541,9 @@ export function ChatRoomRealtime({
     roomId: room.id,
     supabase,
     viewerId,
-    peerUserId: roomState.peerProfile?.id,
     onInsert: handleRealtimeInsert,
     onParticipantUpdate: handleParticipantUpdate,
     onTranslationInsert: handleTranslationInsert,
-    onPeerProfileUpdate: handlePeerProfileUpdate,
     onStatusChange: handleRealtimeStatusChange
   });
 
@@ -759,11 +568,7 @@ export function ChatRoomRealtime({
 
       setMessages((current) => {
         const mergedMessages = dedupeRoomMessagesById([...current, optimisticMessage]);
-        const nextMessages = applyOutgoingReadState(
-          mergedMessages,
-          otherUserLastSeenAtRef.current,
-          otherUserLastReadMessageIdRef.current
-        );
+        const nextMessages = applyOutgoingReadState(mergedMessages, otherUserLastSeenAtRef.current);
         setHasRecentMessages(nextMessages.length > 0);
         return nextMessages;
       });
@@ -785,8 +590,7 @@ export function ChatRoomRealtime({
               }
             : message
         ),
-        otherUserLastSeenAtRef.current,
-        otherUserLastReadMessageIdRef.current
+        otherUserLastSeenAtRef.current
       )
     );
   }, []);
@@ -803,11 +607,7 @@ export function ChatRoomRealtime({
         const merged = hasTemp
           ? dedupeRoomMessagesById(replacedMessages)
           : dedupeRoomMessagesById([...replacedMessages, resolvedMessage]);
-        const withReadState = applyOutgoingReadState(
-          merged,
-          otherUserLastSeenAtRef.current,
-          otherUserLastReadMessageIdRef.current
-        );
+        const withReadState = applyOutgoingReadState(merged, otherUserLastSeenAtRef.current);
         setHasRecentMessages(withReadState.length > 0);
         return withReadState;
       });
@@ -896,37 +696,9 @@ export function ChatRoomRealtime({
     setHasRecentMessages(false);
   }, [room.id]);
 
-  const peerLastActivityAt = useMemo(
-    () => pickLatestTimestamp(peerProfileLastSeenAt, otherUserLastSeenAt),
-    [otherUserLastSeenAt, peerProfileLastSeenAt]
-  );
-  const peerPresenceTopic = useMemo(() => {
-    if (!peerShowLastSeen) {
-      return "";
-    }
-
-    return formatPresenceTopic(peerLastActivityAt, locale);
-  }, [locale, peerLastActivityAt, peerShowLastSeen]);
-
-  const roomForRender = useMemo(() => {
-    if (!roomState.peerProfile) {
-      return roomState;
-    }
-
-    return {
-      ...roomState,
-      topic: peerPresenceTopic,
-      peerProfile: {
-        ...roomState.peerProfile,
-        showLastSeen: peerShowLastSeen,
-        lastSeenAt: peerShowLastSeen ? peerLastActivityAt ?? undefined : undefined
-      }
-    } satisfies ChatRoomSummary;
-  }, [peerLastActivityAt, peerPresenceTopic, peerShowLastSeen, roomState]);
-
   return (
     <ChatRoom
-      room={roomForRender}
+      room={roomState}
       messages={messages}
       messageStatusMap={{}}
       connectionState={connectionState}
