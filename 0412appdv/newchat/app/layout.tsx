@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { BridgeAliveLogger } from "@/components/runtime/bridge-alive-logger";
 import { Manrope, Playfair_Display } from "next/font/google";
 import "./globals.css";
 
@@ -53,7 +52,6 @@ export default function RootLayout({
       <body
         className={`${manrope.variable} ${playfair.variable} min-h-screen bg-[rgb(var(--bg))] font-[family-name:var(--font-sans)] text-[rgb(var(--text))] antialiased`}
       >
-        <BridgeAliveLogger />
         {children}
       </body>
     </html>

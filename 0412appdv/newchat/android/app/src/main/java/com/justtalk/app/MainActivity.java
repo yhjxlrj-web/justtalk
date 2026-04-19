@@ -21,14 +21,6 @@ public class MainActivity extends BridgeActivity {
         logNative("[JT-REALTIME] activity onCreate reached");
         logNative("[JT-REALTIME] bridge alive");
         super.onCreate(savedInstanceState);
-
-        try {
-            registerPlugin(JTLoggerPlugin.class);
-            logNative("[JT-REALTIME] plugin registered: JTLogger");
-        } catch (Throwable error) {
-            Log.e(TAG, "[JT-REALTIME] plugin register failed", error);
-        }
-
         logNative("[JT-REALTIME] activity onCreate complete");
     }
 

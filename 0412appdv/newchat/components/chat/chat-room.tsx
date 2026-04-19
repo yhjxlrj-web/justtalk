@@ -84,7 +84,7 @@ export function ChatRoom({
       createdAt: string;
     }
   ) => void;
-  onToggleReaction: (messageId: string, emoji: string) => Promise<void>;
+  onToggleReaction?: (messageId: string, emoji: string) => Promise<void>;
 }) {
   const dictionary = useDictionary();
   const messagesViewportRef = useRef<HTMLElement | null>(null);
