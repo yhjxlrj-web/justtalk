@@ -9,6 +9,11 @@ function toTimestamp(value?: string) {
   return Number.isNaN(timestamp) ? 0 : timestamp;
 }
 
+export type OutgoingReadCursor = {
+  lastReadMessageId?: string | null;
+  lastSeenAt?: string | null;
+};
+
 export function sortRoomMessagesStable(messages: ChatMessage[]) {
   return [...messages].sort((left, right) => {
     const leftTimestamp = toTimestamp(left.createdAt);
@@ -47,9 +52,18 @@ export function mergeServerMessagesWithPending(serverMessages: ChatMessage[], cu
 
 export function applyOutgoingReadState(
   messages: ChatMessage[],
-  otherUserLastSeenAt: string | null
+  cursor: OutgoingReadCursor | null
 ): ChatMessage[] {
-  if (!otherUserLastSeenAt) {
+  const otherUserLastReadMessageId = cursor?.lastReadMessageId ?? null;
+  const otherUserLastSeenAt = cursor?.lastSeenAt ?? null;
+  const cursorMessage =
+    otherUserLastReadMessageId != null
+      ? messages.find((message) => message.id === otherUserLastReadMessageId) ?? null
+      : null;
+  const cursorMessageTimestamp = toTimestamp(cursorMessage?.createdAt);
+  const hasCursorByMessageId = !!cursorMessage && cursorMessageTimestamp > 0;
+
+  if (!hasCursorByMessageId && !otherUserLastSeenAt) {
     return messages.map((message) =>
       message.direction === "outgoing" &&
       message.deliveryStatus !== "sending" &&
@@ -62,7 +76,7 @@ export function applyOutgoingReadState(
     );
   }
 
-  const otherSeenTimestamp = toTimestamp(otherUserLastSeenAt);
+  const otherSeenTimestamp = toTimestamp(otherUserLastSeenAt ?? undefined);
 
   return messages.map((message) => {
     if (message.direction !== "outgoing") {
@@ -74,8 +88,20 @@ export function applyOutgoingReadState(
     }
 
     const messageTimestamp = toTimestamp(message.createdAt);
-    const readStatus: ChatMessage["readStatus"] =
-      messageTimestamp > 0 && messageTimestamp <= otherSeenTimestamp ? "read" : "unread";
+    let readStatus: ChatMessage["readStatus"] = "unread";
+
+    if (hasCursorByMessageId) {
+      if (message.id === otherUserLastReadMessageId) {
+        readStatus = "read";
+      } else if (messageTimestamp > 0 && messageTimestamp < cursorMessageTimestamp) {
+        readStatus = "read";
+      } else if (messageTimestamp > 0 && messageTimestamp === cursorMessageTimestamp) {
+        readStatus =
+          message.id.localeCompare(otherUserLastReadMessageId ?? "") <= 0 ? "read" : "unread";
+      }
+    } else {
+      readStatus = messageTimestamp > 0 && messageTimestamp <= otherSeenTimestamp ? "read" : "unread";
+    }
 
     if (message.readStatus === readStatus) {
       return message;

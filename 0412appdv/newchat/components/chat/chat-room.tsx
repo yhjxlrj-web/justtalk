@@ -11,6 +11,67 @@ import type { ChatMessage, ChatRoomSummary } from "@/types/chat";
 
 const INITIAL_ROOM_SKELETON_DELAY_MS = 150;
 
+type OutgoingFooterStatus = "sending" | "failed" | "read" | "unread" | null;
+
+function getOutgoingFooterStatus(params: {
+  message: ChatMessage;
+  messageStatusMap: Record<
+    string,
+    {
+      deliveryStatus: "sending" | "sent" | "failed";
+      readStatus: "read" | "unread" | null;
+    }
+  >;
+}): OutgoingFooterStatus {
+  const { message, messageStatusMap } = params;
+
+  if (message.direction !== "outgoing") {
+    return null;
+  }
+
+  const messageStatusKey = message.clientId ?? message.id;
+  const currentMessageStatus = messageStatusMap[messageStatusKey];
+  const deliveryStatus =
+    currentMessageStatus?.deliveryStatus ??
+    message.deliveryStatus ??
+    (message.direction === "outgoing" ? "sent" : undefined);
+
+  if (deliveryStatus === "sending") {
+    return "sending";
+  }
+
+  if (deliveryStatus === "failed") {
+    return "failed";
+  }
+
+  return (currentMessageStatus?.readStatus ?? message.readStatus ?? "unread") as OutgoingFooterStatus;
+}
+
+function resolveOutgoingFooterText(params: {
+  dictionary: ReturnType<typeof useDictionary>;
+  status: OutgoingFooterStatus;
+}): string | null {
+  const { dictionary, status } = params;
+
+  if (status === "sending") {
+    return dictionary.sending;
+  }
+
+  if (status === "failed") {
+    return dictionary.failedToSend;
+  }
+
+  if (status === "read") {
+    return dictionary.read;
+  }
+
+  if (status === "unread") {
+    return dictionary.unread;
+  }
+
+  return null;
+}
+
 export function ChatRoom({
   connectionState = "connected",
   hasResolvedInitialScrollTarget = false,
@@ -334,19 +395,34 @@ export function ChatRoom({
                 {(() => {
                   const prevMessage = messages[index - 1];
                   const nextMessage = messages[index + 1];
-                  const messageStatusKey = message.clientId ?? message.id;
-                  const currentMessageStatus = messageStatusMap[messageStatusKey];
-                  const deliveryStatus =
-                    currentMessageStatus?.deliveryStatus ??
-                    message.deliveryStatus ??
-                    (message.direction === "outgoing" ? "sent" : undefined);
-                  const readStatus = currentMessageStatus?.readStatus ?? message.readStatus ?? null;
                   const senderKey = message.senderId ?? message.direction;
                   const prevSenderKey = prevMessage?.senderId ?? prevMessage?.direction;
                   const nextSenderKey = nextMessage?.senderId ?? nextMessage?.direction;
                   const isSameSenderAsPrev = !!prevMessage && prevSenderKey === senderKey;
                   const isSameSenderAsNext = !!nextMessage && nextSenderKey === senderKey;
                   const showTimestamp = !isSameSenderAsNext;
+                  const currentOutgoingFooterStatus = getOutgoingFooterStatus({
+                    message,
+                    messageStatusMap
+                  });
+                  const nextOutgoingFooterStatus = nextMessage
+                    ? getOutgoingFooterStatus({
+                        message: nextMessage,
+                        messageStatusMap
+                      })
+                    : null;
+                  const shouldShowOutgoingFooter =
+                    message.direction === "outgoing" &&
+                    currentOutgoingFooterStatus !== null &&
+                    (!nextMessage ||
+                      nextSenderKey !== senderKey ||
+                      nextOutgoingFooterStatus !== currentOutgoingFooterStatus);
+                  const footerText = shouldShowOutgoingFooter
+                    ? resolveOutgoingFooterText({
+                        dictionary,
+                        status: currentOutgoingFooterStatus
+                      })
+                    : null;
 
                   return (
                     <MessageBubble
@@ -354,17 +430,7 @@ export function ChatRoom({
                       isSameSenderAsPrev={isSameSenderAsPrev}
                       isSameSenderAsNext={isSameSenderAsNext}
                       showTimestamp={showTimestamp}
-                      footerText={
-                        message.direction === "outgoing" && showTimestamp
-                          ? deliveryStatus === "sending"
-                            ? dictionary.sending
-                            : deliveryStatus === "failed"
-                              ? dictionary.failedToSend
-                              : readStatus === "read"
-                              ? dictionary.read
-                              : dictionary.unread
-                          : null
-                      }
+                      footerText={footerText}
                       onOpenImage={message.messageType === "image" ? setSelectedImageMessage : undefined}
                       onRetryMessage={onRetryMessage}
                       onToggleReaction={onToggleReaction}

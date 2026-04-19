@@ -20,6 +20,7 @@ import {
   applyOutgoingReadState,
   dedupeRoomMessagesById,
   mergeServerMessagesWithPending,
+  type OutgoingReadCursor,
   sortRoomMessagesStable
 } from "@/lib/chat/merge-room-messages";
 import { useRoomPolling } from "@/lib/chat/use-room-polling";
@@ -191,6 +192,16 @@ function syncPreviewCache(roomId: string, message: ChatMessage) {
   );
 }
 
+function buildOutgoingReadCursor(params: {
+  lastReadMessageId: string | null;
+  lastSeenAt: string | null;
+}): OutgoingReadCursor {
+  return {
+    lastReadMessageId: params.lastReadMessageId,
+    lastSeenAt: params.lastSeenAt
+  };
+}
+
 export function ChatRoomRealtime({
   initialMessages,
   room,
@@ -208,8 +219,18 @@ export function ChatRoomRealtime({
   const seededMessages = cachedMessages ?? initialMessages;
   const sortedSeededMessages = useMemo(() => {
     const sortedMessages = sortRoomMessagesStable(seededMessages);
-    return applyOutgoingReadState(sortedMessages, cachedRoomEntrySnapshot?.otherUserLastSeenAt ?? null);
-  }, [cachedRoomEntrySnapshot?.otherUserLastSeenAt, seededMessages]);
+    return applyOutgoingReadState(
+      sortedMessages,
+      buildOutgoingReadCursor({
+        lastReadMessageId: cachedRoomEntrySnapshot?.otherUserLastReadMessageId ?? null,
+        lastSeenAt: cachedRoomEntrySnapshot?.otherUserLastSeenAt ?? null
+      })
+    );
+  }, [
+    cachedRoomEntrySnapshot?.otherUserLastReadMessageId,
+    cachedRoomEntrySnapshot?.otherUserLastSeenAt,
+    seededMessages
+  ]);
 
   const [roomState, setRoomState] = useState(room);
   const [messages, setMessages] = useState<ChatMessage[]>(sortedSeededMessages);
@@ -225,6 +246,9 @@ export function ChatRoomRealtime({
   const [otherUserLastSeenAt, setOtherUserLastSeenAt] = useState<string | null>(
     cachedRoomEntrySnapshot?.otherUserLastSeenAt ?? null
   );
+  const [otherUserLastReadMessageId, setOtherUserLastReadMessageId] = useState<string | null>(
+    cachedRoomEntrySnapshot?.otherUserLastReadMessageId ?? null
+  );
   const [hasResolvedInitialScrollTarget, setHasResolvedInitialScrollTarget] = useState(
     sortedSeededMessages.length > 0
   );
@@ -234,6 +258,7 @@ export function ChatRoomRealtime({
 
   const messagesRef = useRef(messages);
   const otherUserLastSeenAtRef = useRef(otherUserLastSeenAt);
+  const otherUserLastReadMessageIdRef = useRef(otherUserLastReadMessageId);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -243,13 +268,34 @@ export function ChatRoomRealtime({
       messages,
       hasOlderMessages,
       otherUserLastSeenAt,
+      otherUserLastReadMessageId,
       preloadedAt: Date.now()
     });
-  }, [hasOlderMessages, initialScrollTargetMessageId, messages, otherUserLastSeenAt, room.id]);
+  }, [
+    hasOlderMessages,
+    initialScrollTargetMessageId,
+    messages,
+    otherUserLastReadMessageId,
+    otherUserLastSeenAt,
+    room.id
+  ]);
 
   useEffect(() => {
     otherUserLastSeenAtRef.current = otherUserLastSeenAt;
   }, [otherUserLastSeenAt]);
+
+  useEffect(() => {
+    otherUserLastReadMessageIdRef.current = otherUserLastReadMessageId;
+  }, [otherUserLastReadMessageId]);
+
+  const getCurrentReadCursor = useCallback(
+    () =>
+      buildOutgoingReadCursor({
+        lastReadMessageId: otherUserLastReadMessageIdRef.current,
+        lastSeenAt: otherUserLastSeenAtRef.current
+      }),
+    []
+  );
 
   useEffect(() => {
     console.log("[chat-room] chat-room mounted", { roomId: room.id, viewerId });
@@ -295,12 +341,19 @@ export function ChatRoomRealtime({
 
         setMessages((current) => {
           const mergedMessages = mergeServerMessagesWithPending(fetched.messages, current);
-          const next = applyOutgoingReadState(mergedMessages, fetched.otherUserLastSeenAt);
+          const next = applyOutgoingReadState(
+            mergedMessages,
+            buildOutgoingReadCursor({
+              lastReadMessageId: fetched.otherUserLastReadMessageId,
+              lastSeenAt: fetched.otherUserLastSeenAt
+            })
+          );
           setHasRecentMessages(next.length > 0);
           return next;
         });
 
         setOtherUserLastSeenAt(fetched.otherUserLastSeenAt);
+        setOtherUserLastReadMessageId(fetched.otherUserLastReadMessageId);
         setHasOlderMessages(fetched.hasOlderMessages);
         setInitialScrollTargetMessageId(null);
         setHasResolvedInitialScrollTarget(true);
@@ -373,7 +426,7 @@ export function ChatRoomRealtime({
               message.id === matchedSendingMessage.id ? incomingMessage : message
             )
           : dedupeRoomMessagesById([...current, incomingMessage]);
-        const withReadState = applyOutgoingReadState(nextMessages, otherUserLastSeenAtRef.current);
+        const withReadState = applyOutgoingReadState(nextMessages, getCurrentReadCursor());
 
         console.log("[chat-room] setMessages append executed", {
           roomId: room.id,
@@ -388,7 +441,7 @@ export function ChatRoomRealtime({
 
       syncPreviewCache(room.id, incomingMessage);
     },
-    [room.id, viewerId]
+    [getCurrentReadCursor, room.id, viewerId]
   );
 
   const handleRealtimeStatusChange = useCallback((status: RealtimeChannelStatus) => {
@@ -437,14 +490,14 @@ export function ChatRoomRealtime({
 
       setMessages((current) => {
         const mergedMessages = dedupeRoomMessagesById([...current, optimisticMessage]);
-        const nextMessages = applyOutgoingReadState(mergedMessages, otherUserLastSeenAtRef.current);
+        const nextMessages = applyOutgoingReadState(mergedMessages, getCurrentReadCursor());
         setHasRecentMessages(nextMessages.length > 0);
         return nextMessages;
       });
 
       syncPreviewCache(room.id, optimisticMessage);
     },
-    [room.id, viewerId]
+    [getCurrentReadCursor, room.id, viewerId]
   );
 
   const handleSendFailed = useCallback((tempId: string) => {
@@ -459,10 +512,10 @@ export function ChatRoomRealtime({
               }
             : message
         ),
-        otherUserLastSeenAtRef.current
+        getCurrentReadCursor()
       )
     );
-  }, []);
+  }, [getCurrentReadCursor]);
 
   const handleSendSucceeded = useCallback(
     (tempId: string, message: SendSucceededMessage) => {
@@ -476,14 +529,14 @@ export function ChatRoomRealtime({
         const merged = hasTemp
           ? dedupeRoomMessagesById(replacedMessages)
           : dedupeRoomMessagesById([...replacedMessages, resolvedMessage]);
-        const withReadState = applyOutgoingReadState(merged, otherUserLastSeenAtRef.current);
+        const withReadState = applyOutgoingReadState(merged, getCurrentReadCursor());
         setHasRecentMessages(withReadState.length > 0);
         return withReadState;
       });
 
       syncPreviewCache(room.id, resolvedMessage);
     },
-    [room.id, viewerId]
+    [getCurrentReadCursor, room.id, viewerId]
   );
 
   const sendTextMessage = useCallback(
